@@ -1,0 +1,153 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f5f9f7;
+  color: #1f2937;
+}
+
+nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 60px;
+  background-color: white;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+nav h2 {
+  color: #167c63;
+  font-size: 24px;
+}
+
+nav div:last-child {
+  display: flex;
+  gap: 30px;
+}
+
+nav a {
+  text-decoration: none;
+  color: #374151;
+  font-size: 16px;
+}
+
+nav a:hover {
+  color: #167c63;
+}
+
+.hero {
+  text-align: center;
+  padding: 100px 20px;
+}
+
+.hero h1 {
+  font-size: 48px;
+  color: #12372a;
+  margin-bottom: 20px;
+}
+
+.hero p {
+  font-size: 20px;
+  color: #6b7280;
+  margin-bottom: 35px;
+}
+
+.search-box {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.search-box input {
+  width: 450px;
+  padding: 16px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+.search-box button {
+  padding: 16px 25px;
+  border: none;
+  border-radius: 10px;
+  background-color: #167c63;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.search-box button:hover {
+  background-color: #126650;
+}
+
+.features {
+  display: flex;
+  justify-content: center;
+  gap: 25px;
+  padding: 30px 20px 80px;
+}
+
+.feature-card {
+  width: 220px;
+  padding: 30px 20px;
+  text-align: center;
+  background-color: white;
+  border-radius: 15px;
+  border: 1px solid #e5e7eb;
+}
+
+.feature-card h3 {
+  margin: 15px 0 10px;
+}
+
+.feature-card p {
+  color: #6b7280;
+  font-size: 14px;
+}
+
+@media (max-width: 768px) {
+
+  nav {
+    padding: 18px 20px;
+  }
+
+  nav div:last-child {
+    gap: 12px;
+  }
+
+  nav a {
+    font-size: 14px;
+  }
+
+  .hero {
+    padding: 70px 20px;
+  }
+
+  .hero h1 {
+    font-size: 36px;
+  }
+
+  .search-box {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .search-box input {
+    width: 100%;
+    max-width: 450px;
+  }
+
+  .features {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .feature-card {
+    width: 90%;
+    max-width: 350px;
+  }
+}
