@@ -1,24 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
 import "./medlytic.css";
-
-const API = "/api";
-
-async function request(path, { token, ...options } = {}) {
-  const response = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || "Something went wrong.");
-  return body;
-}
+import {
+  searchMedicines,
+  getMedicineDetails,
+  signUpUser,
+  loginUser,
+  getCurrentUser,
+  signOutUser,
+  getProfile,
+  updateProfile,
+  getSearchHistory,
+  getSavedPharmacies,
+  savePharmacy as apiSavePharmacy,
+  ratePharmacy as apiRatePharmacy,
+  reserveMedicine as apiReserveMedicine,
+  submitReport as apiSubmitReport,
+  getOwnerDashboard,
+  saveOwnerMedicine,
+  updateOwnerStock,
+  updateOwnerPharmacyProfile,
+  getAdminDashboard,
+  getAdminRecords,
+  updatePharmacyStatus,
+  updateReportStatus,
+  updateUserActiveStatus,
+} from "./services/api";
 
 function App() {
-  const [token, setToken] = useState(() => localStorage.getItem("medlytic-token") || "");
   const [user, setUser] = useState(null);
   const [view, setView] = useState("home");
   const [medicines, setMedicines] = useState([]);
@@ -32,6 +40,8 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [authRole, setAuthRole] = useState("patient");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
   const [detail, setDetail] = useState(null);
   const [history, setHistory] = useState([]);
   const [saved, setSaved] = useState([]);
@@ -45,49 +55,66 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams();
-      if (searchQuery.trim()) params.set("q", searchQuery.trim());
-      if (location.trim()) params.set("location", location.trim());
-      if (maxPrice) params.set("maxPrice", maxPrice);
-      if (sort) params.set("sort", sort);
-      const data = await request(`/medicines?${params}`, { token });
+      const data = await searchMedicines(
+        {
+          q: searchQuery,
+          location,
+          maxPrice,
+          sort,
+        },
+        user
+      );
       setMedicines(data.medicines);
       setView("home");
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to search medicines.");
     } finally {
       setLoading(false);
     }
-  }, [query, location, maxPrice, sort, token]);
+  }, [query, location, maxPrice, sort, user]);
 
+  // Initial data loading & user session check
   useEffect(() => {
-    request("/medicines")
+    searchMedicines({ sort: "price-asc" })
       .then((data) => setMedicines(data.medicines))
-      .catch((err) => setError(err.message));
-    if (!token) return;
-    request("/auth/me", { token })
-      .then((data) => setUser(data.user))
+      .catch((err) => setError(err.message || "Failed to load catalogue."));
+
+    getCurrentUser()
+      .then((currentUser) => {
+        if (currentUser) {
+          setUser(currentUser);
+        }
+      })
       .catch(() => {
-        localStorage.removeItem("medlytic-token");
-        setToken("");
         setUser(null);
       });
-  }, [token]);
+  }, []);
 
+  // View data fetching based on current authenticated state & view
   useEffect(() => {
-    if (!token || !user) return;
+    if (!user) return;
     if (view === "history") {
-      request("/search-history", { token }).then((data) => setHistory(data.history)).catch((err) => setError(err.message));
+      getSearchHistory(user.id)
+        .then((items) => setHistory(items))
+        .catch((err) => setError(err.message));
     } else if (view === "saved") {
-      request("/saved-pharmacies", { token }).then((data) => setSaved(data.pharmacies)).catch((err) => setError(err.message));
+      getSavedPharmacies(user.id)
+        .then((items) => setSaved(items))
+        .catch((err) => setError(err.message));
     } else if (view === "profile") {
-      request("/profile", { token }).then((data) => setProfileData(data.user)).catch((err) => setError(err.message));
+      getProfile(user.id)
+        .then((data) => setProfileData(data))
+        .catch((err) => setError(err.message));
     } else if (view === "owner") {
-      request("/owner/dashboard", { token }).then(setOwnerData).catch((err) => setError(err.message));
+      getOwnerDashboard(user.id)
+        .then(setOwnerData)
+        .catch((err) => setError(err.message));
     } else if (view === "admin") {
-      request("/admin/dashboard", { token }).then(setAdminData).catch((err) => setError(err.message));
+      getAdminDashboard()
+        .then(setAdminData)
+        .catch((err) => setError(err.message));
     }
-  }, [token, user, view, refreshVersion]);
+  }, [user, view, refreshVersion]);
 
   const handleSearch = async (event) => {
     event.preventDefault();
@@ -96,27 +123,53 @@ function App() {
 
   const handleAuth = async (event) => {
     event.preventDefault();
+    if (authLoading) return;
+    setAuthLoading(true);
+    setAuthError("");
+    setError("");
+
     const form = new FormData(event.currentTarget);
     const payload = Object.fromEntries(form.entries());
+
     try {
-      const data = await request(`/auth/${authMode === "login" ? "login" : "register"}`, {
-        method: "POST",
-        body: JSON.stringify({ ...payload, role: authRole }),
-      });
-      localStorage.setItem("medlytic-token", data.token);
-      setToken(data.token);
-      setUser(data.user);
-      setAuthOpen(false);
-      setNotice(data.message || `Welcome, ${data.user.name}.`);
-      setError("");
+      if (authMode === "login") {
+        const data = await loginUser({
+          email: payload.email,
+          password: payload.password,
+        });
+        setUser(data.user);
+        setAuthOpen(false);
+        setNotice(data.message || `Welcome, ${data.user.name}.`);
+        setError("");
+      } else {
+        const data = await signUpUser({
+          ...payload,
+          role: authRole,
+        });
+
+        if (data.requiresEmailConfirmation) {
+          setNotice(data.message);
+          setAuthOpen(false);
+        } else {
+          setUser(data.user);
+          setAuthOpen(false);
+          setNotice(data.message || `Welcome, ${data.user?.name || ""}.`);
+        }
+        setError("");
+      }
     } catch (err) {
-      setError(err.message);
+      setAuthError(err.message || "Authentication failed. Please try again.");
+    } finally {
+      setAuthLoading(false);
     }
   };
 
-  const signOut = () => {
-    localStorage.removeItem("medlytic-token");
-    setToken("");
+  const signOut = async () => {
+    try {
+      await signOutUser();
+    } catch {
+      // Ignored
+    }
     setUser(null);
     setView("home");
     setNotice("You have been signed out.");
@@ -124,66 +177,73 @@ function App() {
 
   const openMedicine = async (medicine) => {
     try {
-      const data = await request(`/medicines/${medicine.medicineId || medicine.id}`);
+      const data = await getMedicineDetails(medicine.medicineId || medicine.id);
       setDetail(data);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to load medicine details.");
     }
   };
 
   const reserveMedicine = async (listing) => {
     if (!user) {
+      setAuthMode("login");
       setAuthOpen(true);
       return;
     }
     try {
-      const data = await request("/reservations", {
-        token,
-        method: "POST",
-        body: JSON.stringify({ listingId: listing.id, quantity: 1 }),
-      });
+      const data = await apiReserveMedicine(user.id, listing.id, 1);
       setNotice(data.message);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to reserve medicine.");
     }
   };
 
   const savePharmacy = async (pharmacyId) => {
     if (!user) {
+      setAuthMode("login");
       setAuthOpen(true);
       return;
     }
     try {
-      await request("/saved-pharmacies", { token, method: "POST", body: JSON.stringify({ pharmacyId }) });
-      setNotice("Pharmacy saved to your profile.");
+      const data = await apiSavePharmacy(user.id, pharmacyId);
+      setNotice(data.message);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to save pharmacy.");
     }
   };
 
   const ratePharmacy = async (pharmacyId, rating) => {
     if (!user) {
+      setAuthMode("login");
       setAuthOpen(true);
       return;
     }
     try {
-      await request(`/pharmacies/${pharmacyId}/ratings`, { token, method: "POST", body: JSON.stringify({ rating }) });
-      setNotice("Thanks for rating this pharmacy.");
+      const data = await apiRatePharmacy(pharmacyId, rating);
+      setNotice(data.message);
       await search();
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to rate pharmacy.");
     }
   };
 
   const submitReport = async (event) => {
     event.preventDefault();
+    if (!user) {
+      setAuthMode("login");
+      setAuthOpen(true);
+      return;
+    }
     const form = new FormData(event.currentTarget);
     try {
-      await request("/reports", { token, method: "POST", body: JSON.stringify({ ...Object.fromEntries(form.entries()), subject: reportTarget.name }) });
+      const data = await apiSubmitReport(user.id, {
+        ...Object.fromEntries(form.entries()),
+        subject: reportTarget?.name || "Catalogue feedback",
+      });
       setReportTarget(null);
-      setNotice("Thanks — your report was sent for review.");
+      setNotice(data.message);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to submit report.");
     }
   };
 
@@ -206,7 +266,7 @@ function App() {
         </nav>
         <div className="account-actions">
           {user ? <><span className="user-greeting">{user.name}</span><button className="button button-outline button-small" onClick={signOut}>Sign out</button></> :
-            <><button className="button button-quiet" onClick={() => { setAuthMode("login"); setAuthOpen(true); }}>Log in</button><button className="button button-primary button-small" onClick={() => { setAuthMode("register"); setAuthRole("patient"); setAuthOpen(true); }}>Create account</button></>}
+            <><button className="button button-quiet" onClick={() => { setAuthMode("login"); setAuthError(""); setAuthOpen(true); }}>Log in</button><button className="button button-primary button-small" onClick={() => { setAuthMode("register"); setAuthRole("patient"); setAuthError(""); setAuthOpen(true); }}>Create account</button></>}
         </div>
       </header>
 
@@ -230,7 +290,7 @@ function App() {
             <form className="search-form" onSubmit={handleSearch}>
               <label className="search-field"><span>⌕</span><input aria-label="Medicine name" placeholder="Medicine, brand or generic name" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
               <label className="search-field location-field"><span>⌖</span><input aria-label="Location" placeholder="City or area" value={location} onChange={(event) => setLocation(event.target.value)} /></label>
-              <button className="button button-primary search-submit" type="submit">{loading ? "Searching…" : "Search medicines"} <span>↗</span></button>
+              <button className="button button-primary search-submit" type="submit" disabled={loading}>{loading ? "Searching…" : "Search medicines"} <span>↗</span></button>
             </form>
           </section>
 
@@ -253,24 +313,100 @@ function App() {
         </>}
         {view === "history" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Recent medicine searches" sub="Pick up where you left off." />{history.length ? <div className="history-list">{history.map((item) => <button key={item.id} onClick={() => { setQuery(item.query); search(item.query); }}><span className="history-icon">⌕</span><span><b>{item.query}</b><small>{new Date(item.createdAt).toLocaleString()}</small></span><span className="history-arrow">↗</span></button>)}</div> : <EmptyDashboard text="Your searches will appear here after you look up a medicine." />}</section>}
         {view === "saved" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Saved pharmacies" sub="Keep trusted local stores close at hand." />{saved.length ? <div className="medicine-grid">{saved.map((pharmacy) => <PharmacyCard key={pharmacy.id} pharmacy={pharmacy} />)}</div> : <EmptyDashboard text="Save a pharmacy from any medicine result to see it here." />}</section>}
-          {view === "profile" && <ProfilePanel key={profileData?.name || ""} profile={profileData} token={token} onChange={setUser} onError={setError} onNotice={setNotice} />}
-          {view === "owner" && <OwnerDashboard data={ownerData} token={token} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
-          {view === "admin" && <AdminDashboard data={adminData} token={token} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
+        {view === "profile" && <ProfilePanel key={profileData?.name || ""} profile={profileData} user={user} onChange={setUser} onError={setError} onNotice={setNotice} />}
+        {view === "owner" && <OwnerDashboard data={ownerData} user={user} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
+        {view === "admin" && <AdminDashboard data={adminData} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
       </main>
 
       <footer className="site-footer"><a className="brand footer-brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}><span className="brand-mark">✚</span><span>medlytic<span className="brand-dot">.</span></span></a><span>Medicine information is for general awareness only. Always follow your clinician’s advice.</span><span>© 2026 Medlytic</span></footer>
 
-      {authOpen && <Modal title={authMode === "login" ? "Welcome back" : "Create your account"} onClose={() => setAuthOpen(false)}>
-        <p className="modal-intro">{authMode === "login" ? "Sign in to manage your searches and saved pharmacies." : "Join Medlytic to find care closer to home."}</p>
-        <form className="stack-form" onSubmit={handleAuth}>
-          {authMode === "register" && <><label>Your name<input name="name" required autoComplete="name" /></label><label>I am a<select value={authRole} onChange={(event) => setAuthRole(event.target.value)}><option value="patient">Patient</option><option value="owner">Medical store owner</option></select></label>{authRole === "owner" && <><label>Pharmacy name<input name="pharmacyName" required /></label><label>Area / city<input name="location" required /></label></>}</>}
-          <label>Email address<input name="email" type="email" required autoComplete="email" /></label>
-          <label>Password<input name="password" type="password" required minLength="8" autoComplete={authMode === "login" ? "current-password" : "new-password"} /></label>
-          {error && <div className="alert alert-error" role="alert">{error}</div>}
-          <button className="button button-primary button-full" type="submit">{authMode === "login" ? "Log in" : "Create account"}</button>
-        </form>
-        <button className="text-button modal-toggle" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setError(""); }}>{authMode === "login" ? "New to Medlytic? Create an account" : "Already have an account? Log in"}</button>
-      </Modal>}
+      {authOpen && (
+        <Modal
+          title={authMode === "login" ? "Welcome back" : "Create your account"}
+          onClose={() => {
+            if (!authLoading) {
+              setAuthOpen(false);
+              setAuthError("");
+            }
+          }}
+        >
+          <p className="modal-intro">
+            {authMode === "login"
+              ? "Sign in to manage your searches and saved pharmacies."
+              : "Join Medlytic to find care closer to home."}
+          </p>
+          <form className="stack-form" onSubmit={handleAuth}>
+            {authMode === "register" && (
+              <>
+                <label>
+                  Your name
+                  <input name="name" required autoComplete="name" disabled={authLoading} />
+                </label>
+                <label>
+                  I am a
+                  <select
+                    value={authRole}
+                    onChange={(event) => setAuthRole(event.target.value)}
+                    disabled={authLoading}
+                  >
+                    <option value="patient">Patient</option>
+                    <option value="owner">Medical store owner</option>
+                  </select>
+                </label>
+                {authRole === "owner" && (
+                  <>
+                    <label>
+                      Pharmacy name
+                      <input name="pharmacyName" required disabled={authLoading} />
+                    </label>
+                    <label>
+                      Area / city
+                      <input name="location" required disabled={authLoading} />
+                    </label>
+                  </>
+                )}
+              </>
+            )}
+            <label>
+              Email address
+              <input name="email" type="email" required autoComplete="email" disabled={authLoading} />
+            </label>
+            <label>
+              Password
+              <input
+                name="password"
+                type="password"
+                required
+                minLength="8"
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                disabled={authLoading}
+              />
+            </label>
+            {authError && <div className="alert alert-error" role="alert">{authError}</div>}
+            <button
+              className="button button-primary button-full"
+              type="submit"
+              disabled={authLoading}
+            >
+              {authLoading
+                ? (authMode === "login" ? "Signing in…" : "Creating account…")
+                : (authMode === "login" ? "Log in" : "Create account")}
+            </button>
+          </form>
+          <button
+            className="text-button modal-toggle"
+            disabled={authLoading}
+            onClick={() => {
+              setAuthMode(authMode === "login" ? "register" : "login");
+              setAuthError("");
+            }}
+          >
+            {authMode === "login"
+              ? "New to Medlytic? Create an account"
+              : "Already have an account? Log in"}
+          </button>
+        </Modal>
+      )}
 
       {detail && <Modal title={detail.medicine.name} onClose={() => setDetail(null)}>
         <div className="detail-generic">{detail.medicine.genericName} · {detail.medicine.category}</div>
@@ -279,6 +415,7 @@ function App() {
         <h3 className="availability-heading">Available listings</h3>{detail.listings.map((listing) => <div className="listing-line" key={listing.id}><span><b>{listing.pharmacy}</b><small>{listing.location} · ★ {listing.rating}</small></span><strong>₹{listing.price.toFixed(2)}</strong></div>)}
         {user?.role === "patient" && <button className="text-button report-link" onClick={() => { setReportTarget({ name: detail.medicine.name }); setDetail(null); }}>Report incorrect information</button>}
       </Modal>}
+
       {reportTarget && <Modal title="Report information" onClose={() => setReportTarget(null)}><p className="modal-intro">Help us keep medicine and pharmacy information accurate. Reports are reviewed by the platform team.</p><form className="stack-form" onSubmit={submitReport}><label>Report type<select name="type"><option value="incorrect_price">Incorrect price</option><option value="incorrect_stock">Incorrect availability</option><option value="medicine_information">Medicine information</option><option value="complaint">Complaint</option></select></label><label>What should we review?<textarea name="details" required minLength="5" maxLength="1000" rows="4" /></label>{error && <div className="alert alert-error">{error}</div>}<button className="button button-primary button-full" type="submit">Send report</button></form></Modal>}
     </div>
   );
@@ -297,69 +434,95 @@ function MedicineCard({ medicine, onDetails, onReserve, onSave, onRate }) {
   </article>;
 }
 
-function OwnerDashboard({ data, token, onRefresh, onError, onNotice }) {
+function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
   const [form, setForm] = useState({ name: "", genericName: "", category: "", price: "", stock: "" });
   const [editing, setEditing] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const listings = data?.listings || [];
+
   const submit = async (event) => {
     event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
     try {
-      await request(editing ? `/owner/medicines/${editing}` : "/owner/medicines", { token, method: editing ? "PATCH" : "POST", body: JSON.stringify(form) });
+      await saveOwnerMedicine(user.id, form, editing);
       setForm({ name: "", genericName: "", category: "", price: "", stock: "" });
       setEditing(null);
       onNotice("Inventory saved.");
       onRefresh();
-    } catch (err) { onError(err.message); }
+    } catch (err) {
+      onError(err.message || "Failed to save medicine.");
+    } finally {
+      setSubmitting(false);
+    }
   };
+
   const edit = (listing) => {
     setEditing(listing.id);
     setForm({ name: listing.name, genericName: listing.genericName, category: listing.category, price: String(listing.price), stock: String(listing.stock) });
   };
+
   const updateStock = async (listing, stock) => {
     try {
-      await request(`/owner/medicines/${listing.id}`, { token, method: "PATCH", body: JSON.stringify({ stock }) });
+      await updateOwnerStock(listing.id, stock);
       onNotice("Stock updated.");
       onRefresh();
-    } catch (err) { onError(err.message); }
+    } catch (err) {
+      onError(err.message || "Failed to update stock.");
+    }
   };
+
   return <section className="content-section dashboard-section"><SectionTitle eyebrow="PHARMACY PORTAL" title={data?.pharmacy?.name || "Store dashboard"} sub={data?.pharmacy?.status === "pending" ? "Your store is awaiting admin approval. You can prepare inventory while we review your registration." : "Manage your store listing, live inventory and customer requests."} />
     <div className="metric-grid"><Metric label="Listed medicines" value={data?.stats?.listingCount ?? "—"} /><Metric label="In-stock items" value={data?.stats?.inStock ?? "—"} /><Metric label="Average rating" value={data?.stats?.rating ? `★ ${data.stats.rating}` : "—"} /></div>
-    {data?.pharmacy && <StoreProfileEditor key={JSON.stringify(data.pharmacy)} pharmacy={data.pharmacy} token={token} onRefresh={onRefresh} onError={onError} onNotice={onNotice} />}
-    <div className="dashboard-columns"><div className="panel"><h3>{editing ? "Edit medicine" : "Add a medicine"}</h3><form className="stack-form" onSubmit={submit}><label>Medicine name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Generic name<input required value={form.genericName} onChange={(e) => setForm({ ...form, genericName: e.target.value })} /></label><label>Category<input required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></label><div className="form-row"><label>Price (₹)<input type="number" min="0" step="0.01" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></label><label>Stock quantity<input type="number" min="0" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></label></div><button className="button button-primary" type="submit">{editing ? "Save changes" : "Add to inventory"}</button>{editing && <button className="text-button" type="button" onClick={() => { setEditing(null); setForm({ name: "", genericName: "", category: "", price: "", stock: "" }); }}>Cancel edit</button>}</form></div>
+    {data?.pharmacy && <StoreProfileEditor key={JSON.stringify(data.pharmacy)} pharmacy={data.pharmacy} user={user} onRefresh={onRefresh} onError={onError} onNotice={onNotice} />}
+    <div className="dashboard-columns"><div className="panel"><h3>{editing ? "Edit medicine" : "Add a medicine"}</h3><form className="stack-form" onSubmit={submit}><label>Medicine name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Generic name<input required value={form.genericName} onChange={(e) => setForm({ ...form, genericName: e.target.value })} /></label><label>Category<input required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></label><div className="form-row"><label>Price (₹)<input type="number" min="0" step="0.01" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></label><label>Stock quantity<input type="number" min="0" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></label></div><button className="button button-primary" type="submit" disabled={submitting}>{submitting ? "Saving…" : (editing ? "Save changes" : "Add to inventory")}</button>{editing && <button className="text-button" type="button" onClick={() => { setEditing(null); setForm({ name: "", genericName: "", category: "", price: "", stock: "" }); }}>Cancel edit</button>}</form></div>
       <div className="panel"><h3>Customer requests</h3>{data?.reservations?.length ? data.reservations.map((item) => <div className="request-line" key={item.id}><span><b>{item.medicine}</b><small>{item.customer} · Qty {item.quantity}</small></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>) : <p className="muted-copy">Reservations for your listed medicines will appear here.</p>}</div></div>
     <div className="panel inventory-panel"><h3>Medicine inventory <span className="subtle-count">{listings.length} listings</span></h3>{listings.length ? listings.map((listing) => <div className="inventory-line" key={listing.id}><span><b>{listing.name}</b><small>{listing.genericName} · ₹{listing.price.toFixed(2)}</small></span><label className="stock-control">Stock<input type="number" min="0" defaultValue={listing.stock} onBlur={(e) => { if (Number(e.target.value) !== listing.stock) updateStock(listing, Number(e.target.value)); }} /></label><button className="text-button" onClick={() => edit(listing)}>Edit</button></div>) : <EmptyDashboard text="Add your first medicine using the form above." />}</div>
   </section>;
 }
 
-function AdminDashboard({ data, token, currentAdminId, onRefresh, onError, onNotice }) {
+function AdminDashboard({ data, currentAdminId, onRefresh, onError, onNotice }) {
   const [tab, setTab] = useState("pharmacies");
   const [records, setRecords] = useState([]);
+
   useEffect(() => {
-    const endpoint = tab === "pharmacies" ? "/admin/pharmacies" : tab === "reports" ? "/admin/reports" : tab === "users" ? "/admin/users" : "/admin/audit";
-    request(endpoint, { token }).then((result) => setRecords(result[tab] || result.records || [])).catch((err) => onError(err.message));
-  }, [tab, token, onError]);
+    getAdminRecords(tab)
+      .then(setRecords)
+      .catch((err) => onError(err.message || "Failed to load records."));
+  }, [tab, onError]);
+
   const changeStatus = async (pharmacy, status) => {
     try {
-      await request(`/admin/pharmacies/${pharmacy.id}`, { token, method: "PATCH", body: JSON.stringify({ status }) });
+      await updatePharmacyStatus(pharmacy.id, status);
       onNotice(`Pharmacy ${status}.`);
       onRefresh();
-    } catch (err) { onError(err.message); }
+    } catch (err) { onError(err.message || "Failed to update pharmacy status."); }
   };
+
   const updateReport = async (report, status) => {
     try {
-      await request(`/admin/reports/${report.id}`, { token, method: "PATCH", body: JSON.stringify({ status }) });
+      await updateReportStatus(report.id, status);
       onNotice("Report updated.");
       setRecords(records.map((item) => item.id === report.id ? { ...item, status } : item));
-    } catch (err) { onError(err.message); }
+    } catch (err) { onError(err.message || "Failed to update report."); }
   };
+
+  const toggleUserActive = async (account) => {
+    try {
+      await updateUserActiveStatus(account.id, !account.active);
+      onNotice(account.active ? "Account suspended." : "Account activated.");
+      onRefresh();
+    } catch (err) { onError(err.message || "Failed to update account."); }
+  };
+
   return <section className="content-section dashboard-section"><SectionTitle eyebrow="PLATFORM ADMIN" title="Operations overview" sub="Review pharmacy registrations, platform accounts and reported information." />
     <div className="metric-grid"><Metric label="Registered users" value={data?.stats?.users ?? "—"} /><Metric label="Pharmacies" value={data?.stats?.pharmacies ?? "—"} /><Metric label="Pending approval" value={data?.stats?.pendingPharmacies ?? "—"} /><Metric label="Open reports" value={data?.stats?.openReports ?? "—"} /></div>
     <div className="admin-tabs">{[["pharmacies", "Pharmacy approvals"], ["reports", "Reports"], ["users", "Accounts"], ["audit", "Audit log"]].map(([key, label]) => <button key={key} className={tab === key ? "admin-tab active" : "admin-tab"} onClick={() => setTab(key)}>{label}</button>)}</div>
     <div className="panel admin-records">
       {tab === "pharmacies" && (records.length ? records.map((pharmacy) => <div className="admin-record" key={pharmacy.id}><span><b>{pharmacy.name}</b><small>{pharmacy.location} · {pharmacy.ownerName} · {pharmacy.ownerEmail}</small></span><span className={`status-tag ${pharmacy.status}`}>{pharmacy.status}</span>{pharmacy.status === "pending" && <div className="record-actions"><button className="button button-primary button-small" onClick={() => changeStatus(pharmacy, "approved")}>Approve</button><button className="button button-outline button-small" onClick={() => changeStatus(pharmacy, "rejected")}>Reject</button></div>}</div>) : <EmptyDashboard text="No pharmacy registrations to review." />)}
       {tab === "reports" && (records.length ? records.map((report) => <div className="admin-record" key={report.id}><span><b>{report.subject}</b><small>{report.type} · {report.details}</small></span><span className={`status-tag ${report.status}`}>{report.status}</span>{report.status === "open" && <button className="button button-outline button-small" onClick={() => updateReport(report, "resolved")}>Resolve</button>}</div>) : <EmptyDashboard text="No reports have been submitted." />)}
-      {tab === "users" && (records.length ? records.map((account) => <div className="admin-record" key={account.id}><span><b>{account.name}</b><small>{account.email} · {account.role}</small></span><span className={`status-tag ${account.active ? "approved" : "rejected"}`}>{account.active ? "active" : "suspended"}</span>{account.id !== currentAdminId && <button className="button button-outline button-small" onClick={async () => { try { await request(`/admin/users/${account.id}`, { token, method: "PATCH", body: JSON.stringify({ active: !account.active }) }); onNotice(account.active ? "Account suspended." : "Account activated."); onRefresh(); } catch (err) { onError(err.message); } }}>{account.active ? "Suspend" : "Activate"}</button>}</div>) : <EmptyDashboard text="No accounts found." />)}
-      {tab === "audit" && (records.length ? records.map((record) => <div className="admin-record" key={record.id}><span><b>{record.action}</b><small>{record.actor} · {record.target} · {new Date(record.createdAt).toLocaleString()}</small></span></div>) : <EmptyDashboard text="Platform activity will appear here." />)}
+      {tab === "users" && (records.length ? records.map((account) => <div className="admin-record" key={account.id}><span><b>{account.name}</b><small>{account.email} · {account.role}</small></span><span className={`status-tag ${account.active ? "approved" : "rejected"}`}>{account.active ? "active" : "suspended"}</span>{account.id !== currentAdminId && <button className="button button-outline button-small" onClick={() => toggleUserActive(account)}>{account.active ? "Suspend" : "Activate"}</button>}</div>) : <EmptyDashboard text="No accounts found." />)}
+      {tab === "audit" && (records.length ? records.map((record) => <div className="admin-record" key={record.id}><span><b>{record.action}</b><small>{record.actor} · {record.target} · {new Date(record.created_at || record.createdAt).toLocaleString()}</small></span></div>) : <EmptyDashboard text="Platform activity will appear here." />)}
     </div>
   </section>;
 }
@@ -368,30 +531,42 @@ function PharmacyCard({ pharmacy }) {
   return <article className="medicine-card saved-pharmacy"><span className="medicine-icon">⌂</span><h3>{pharmacy.name}</h3><p>{pharmacy.location}</p><span className="rating">★ {pharmacy.rating || "New"}</span></article>;
 }
 
-function StoreProfileEditor({ pharmacy, token, onRefresh, onError, onNotice }) {
-  const [profile, setProfile] = useState({ name: pharmacy.name, location: pharmacy.location, address: pharmacy.address, phone: pharmacy.phone });
+function StoreProfileEditor({ pharmacy, user, onRefresh, onError, onNotice }) {
+  const [profile, setProfile] = useState({ name: pharmacy.name, location: pharmacy.location, address: pharmacy.address || "", phone: pharmacy.phone || "" });
+  const [saving, setSaving] = useState(false);
+
   const submit = async (event) => {
     event.preventDefault();
+    if (saving) return;
+    setSaving(true);
     try {
-      await request("/owner/profile", { token, method: "PATCH", body: JSON.stringify(profile) });
+      await updateOwnerPharmacyProfile(user.id, profile);
       onNotice("Pharmacy profile updated.");
       onRefresh();
-    } catch (err) { onError(err.message); }
+    } catch (err) { onError(err.message || "Failed to update pharmacy profile."); }
+    finally { setSaving(false); }
   };
-  return <div className="panel store-profile-panel"><h3>Pharmacy profile</h3><form className="store-profile-form" onSubmit={submit}><label>Store name<input required value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></label><label>Location<input required value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value })} /></label><label>Address<input required value={profile.address} onChange={(e) => setProfile({ ...profile, address: e.target.value })} /></label><label>Phone<input required value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} /></label><button className="button button-outline button-small" type="submit">Save profile</button></form></div>;
+
+  return <div className="panel store-profile-panel"><h3>Pharmacy profile</h3><form className="store-profile-form" onSubmit={submit}><label>Store name<input required value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></label><label>Location<input required value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value })} /></label><label>Address<input required value={profile.address} onChange={(e) => setProfile({ ...profile, address: e.target.value })} /></label><label>Phone<input required value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} /></label><button className="button button-outline button-small" type="submit" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></form></div>;
 }
 
-function ProfilePanel({ profile, token, onChange, onError, onNotice }) {
-  const [name, setName] = useState(profile?.name || "");
+function ProfilePanel({ profile, user, onChange, onError, onNotice }) {
+  const [name, setName] = useState(profile?.name || user?.name || "");
+  const [saving, setSaving] = useState(false);
+
   const save = async (event) => {
     event.preventDefault();
+    if (saving) return;
+    setSaving(true);
     try {
-      const result = await request("/profile", { token, method: "PATCH", body: JSON.stringify({ name }) });
-      onChange(result.user);
+      const updated = await updateProfile(user.id, { name });
+      onChange({ ...user, name: updated.name });
       onNotice("Profile updated.");
-    } catch (err) { onError(err.message); }
+    } catch (err) { onError(err.message || "Failed to update profile."); }
+    finally { setSaving(false); }
   };
-  return <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Profile settings" sub="Manage your Medlytic account details." /><div className="panel profile-panel"><div className="profile-avatar">{profile?.name?.slice(0, 1).toUpperCase() || "M"}</div><form className="stack-form" onSubmit={save}><label>Your name<input required maxLength="80" value={name} onChange={(event) => setName(event.target.value)} /></label><label>Email address<input value={profile?.email || ""} disabled /></label><label>Account type<input value="Patient account" disabled /></label><button className="button button-primary" type="submit">Save profile</button></form></div></section>;
+
+  return <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Profile settings" sub="Manage your Medlytic account details." /><div className="panel profile-panel"><div className="profile-avatar">{(name || "M").slice(0, 1).toUpperCase()}</div><form className="stack-form" onSubmit={save}><label>Your name<input required maxLength="80" value={name} onChange={(event) => setName(event.target.value)} /></label><label>Email address<input value={profile?.email || user?.email || ""} disabled /></label><label>Account type<input value={`${(user?.role || "patient").slice(0, 1).toUpperCase()}${(user?.role || "patient").slice(1)} account`} disabled /></label><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></form></div></section>;
 }
 
 function SectionTitle({ eyebrow, title, sub }) {
