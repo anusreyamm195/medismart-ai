@@ -183,11 +183,13 @@
   }
 }
 .hero button {
-  width: auto;
-  height: auto;
-  min-height: 0;
-  padding: 14px 28px;
-  font-size: 16px;
-  align-self: center;
-  border-radius: 10px;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    padding: 14px 28px;
+    font-size: 16px;
+    align-self: center;
+    border-radius: 10px;
+    cursor: pointer;
+    border: none;
 }
