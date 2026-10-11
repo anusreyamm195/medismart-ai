@@ -1,11 +1,15 @@
 import { useState } from "react";
 import Navbar from "./components/Navbar";
+import Search from "./Search";
 import medicines from "./data/medicines";
 import MedicineCard from "./components/MedicineCard";
 
 function App() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showResults, setShowResults] = useState(false);
+  const [locationFilter, setLocationFilter] = useState("");
+const [maxPrice, setMaxPrice] = useState("");
+const [sortOrder, setSortOrder] = useState("default");
 
   const handleSearch = () => {
     if (searchTerm.trim() === "") {
@@ -18,6 +22,39 @@ function App() {
 
   const filteredMedicines = medicines.filter((medicine) => {
     const search = searchTerm.toLowerCase().trim();
+    const filteredMedicines = medicines
+  .filter((medicine) => {
+    const search = searchTerm.toLowerCase().trim();
+
+    const matchesSearch =
+      medicine.name.toLowerCase().includes(search) ||
+      medicine.genericName.toLowerCase().includes(search) ||
+      medicine.category.toLowerCase().includes(search) ||
+      medicine.pharmacy.toLowerCase().includes(search);
+
+    const matchesLocation =
+      locationFilter.trim() === "" ||
+      medicine.location
+        .toLowerCase()
+        .includes(locationFilter.toLowerCase().trim());
+
+    const matchesPrice =
+      maxPrice === "" ||
+      medicine.price <= Number(maxPrice);
+
+    return matchesSearch && matchesLocation && matchesPrice;
+  })
+  .sort((a, b) => {
+    if (sortOrder === "low-to-high") {
+      return a.price - b.price;
+    }
+
+    if (sortOrder === "high-to-low") {
+      return b.price - a.price;
+    }
+
+    return 0;
+  });
 
     return (
       medicine.name.toLowerCase().includes(search) ||
@@ -60,6 +97,44 @@ function App() {
           <button onClick={handleSearch}>
             🔍 Search
           </button>
+          <div className="filter-panel">
+  <input
+    type="text"
+    placeholder="Filter by location"
+    value={locationFilter}
+    onChange={(e) => setLocationFilter(e.target.value)}
+  />
+
+  <input
+    type="number"
+    min="0"
+    placeholder="Maximum price (₹)"
+    value={maxPrice}
+    onChange={(e) => setMaxPrice(e.target.value)}
+  />
+
+  <select
+    value={sortOrder}
+    onChange={(e) => setSortOrder(e.target.value)}
+  >
+    <option value="default">Sort by price</option>
+    <option value="low-to-high">Price: Low to High</option>
+    <option value="high-to-low">Price: High to Low</option>
+  </select>
+
+  <button
+    type="button"
+    onClick={() => {
+      setSearchTerm("");
+      setLocationFilter("");
+      setMaxPrice("");
+      setSortOrder("default");
+      setShowResults(false);
+    }}
+  >
+    Clear Filters
+  </button>
+</div>
 
         </div>
 
