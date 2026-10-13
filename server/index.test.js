@@ -47,6 +47,11 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
   assert.equal(detail.status, 200);
   assert.ok(detail.body.alternatives.includes("Calpol 650"));
   assert.ok(detail.body.listings.length > 0);
+
+  const nearby = await api("/medicines?q=paracetamol&latitude=12.935&longitude=77.624");
+  assert.equal(nearby.body.medicines[0].pharmacy, "City Care Medicals");
+  assert.ok(nearby.body.medicines[0].distanceKm < 1);
+  assert.equal((await api("/medicines?latitude=91&longitude=77")).status, 400);
 });
 
 test("patients can reserve an available listing and see search history", async () => {
@@ -88,12 +93,16 @@ test("owners can update only their inventory, while admins can approve store sig
     role: "owner",
     pharmacyName: "New Pharmacy",
     location: "Jayanagar",
+    latitude: 12.925,
+    longitude: 77.583,
   }) });
   assert.equal(signup.status, 201);
   const adminToken = await login("admin@medlytic.local", "Admin123!");
   const pharmacies = await api("/admin/pharmacies", { token: adminToken });
   const pending = pharmacies.body.pharmacies.find((item) => item.name === "New Pharmacy");
   assert.equal(pending.status, "pending");
+  assert.equal(pending.latitude, 12.925);
+  assert.equal(pending.longitude, 77.583);
   const approval = await api(`/admin/pharmacies/${pending.id}`, { token: adminToken, method: "PATCH", body: JSON.stringify({ status: "approved" }) });
   assert.equal(approval.status, 200);
 });

@@ -3,6 +3,41 @@ import "./medlytic.css";
 
 const API = "/api";
 
+function getCurrentPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Location access is not available in this browser."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude }),
+      () => reject(new Error("Could not access your location. Check browser permission and try again.")),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 },
+    );
+  });
+}
+
+async function reverseGeocode({ latitude, longitude }) {
+  const params = new URLSearchParams({ format: "jsonv2", lat: latitude, lon: longitude });
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`);
+    if (response.ok) {
+      const result = await response.json();
+      if (result.display_name) {
+        const address = result.address || {};
+        const street = [address.house_number, address.road].filter(Boolean).join(" ");
+        const locality = address.suburb || address.neighbourhood || address.city_district;
+        const city = address.city || address.town || address.village;
+        const label = [...new Set([street, locality, city, address.state].filter(Boolean))].join(", ");
+        return (label || result.display_name).slice(0, 160);
+      }
+    }
+  } catch {
+    // Coordinates still work when the optional address lookup is unavailable.
+  }
+  return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+}
+
 async function request(path, { token, ...options } = {}) {
   const response = await fetch(`${API}${path}`, {
     ...options,
@@ -24,6 +59,9 @@ function App() {
   const [medicines, setMedicines] = useState([]);
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
+  const [userCoordinates, setUserCoordinates] = useState(null);
+  const [locating, setLocating] = useState(false);
+  const [registrationCoordinates, setRegistrationCoordinates] = useState(null);
   const [maxPrice, setMaxPrice] = useState("");
   const [sort, setSort] = useState("price-asc");
   const [notice, setNotice] = useState("");
@@ -41,13 +79,16 @@ function App() {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [reportTarget, setReportTarget] = useState(null);
 
-  const search = useCallback(async (searchQuery = query) => {
+  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates) => {
     setLoading(true);
     setError("");
     try {
       const params = new URLSearchParams();
       if (searchQuery.trim()) params.set("q", searchQuery.trim());
-      if (location.trim()) params.set("location", location.trim());
+      if (coordinates) {
+        params.set("latitude", coordinates.latitude);
+        params.set("longitude", coordinates.longitude);
+      } else if (locationQuery.trim()) params.set("location", locationQuery.trim());
       if (maxPrice) params.set("maxPrice", maxPrice);
       if (sort) params.set("sort", sort);
       const data = await request(`/medicines?${params}`, { token });
@@ -58,7 +99,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [query, location, maxPrice, sort, token]);
+  }, [query, location, userCoordinates, maxPrice, sort, token]);
 
   useEffect(() => {
     request("/medicines")
@@ -94,14 +135,34 @@ function App() {
     await search();
   };
 
+  const locateMe = async () => {
+    setLocating(true);
+    setError("");
+    try {
+      const coordinates = await getCurrentPosition();
+      setUserCoordinates(coordinates);
+      setLocation(await reverseGeocode(coordinates));
+      await search(query, "", coordinates);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLocating(false);
+    }
+  };
+
   const handleAuth = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const payload = Object.fromEntries(form.entries());
     try {
+      const registration = { ...payload, role: authRole };
+      if (authMode === "register" && authRole === "owner" && registrationCoordinates) {
+        registration.latitude = registrationCoordinates.latitude;
+        registration.longitude = registrationCoordinates.longitude;
+      }
       const data = await request(`/auth/${authMode === "login" ? "login" : "register"}`, {
         method: "POST",
-        body: JSON.stringify({ ...payload, role: authRole }),
+        body: JSON.stringify(registration),
       });
       localStorage.setItem("medlytic-token", data.token);
       setToken(data.token);
@@ -229,21 +290,23 @@ function App() {
             </div>
             <form className="search-form" onSubmit={handleSearch}>
               <label className="search-field"><span>⌕</span><input aria-label="Medicine name" placeholder="Medicine, brand or generic name" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-              <label className="search-field location-field"><span>⌖</span><input aria-label="Location" placeholder="City or area" value={location} onChange={(event) => setLocation(event.target.value)} /></label>
+              <label className="search-field location-field"><span>⌖</span><input aria-label="Location" placeholder="City or area" value={location} onChange={(event) => { setLocation(event.target.value); setUserCoordinates(null); }} /></label>
+              <button className="button button-outline button-small locate-button" type="button" onClick={locateMe} disabled={locating}>{locating ? "Locating…" : "Locate me"}</button>
               <button className="button button-primary search-submit" type="submit">{loading ? "Searching…" : "Search medicines"} <span>↗</span></button>
             </form>
+            <a className="map-attribution search-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">Location lookup © OpenStreetMap</a>
           </section>
 
           <section className="content-section results-section">
             <div className="section-heading">
-              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>Prices and stock reported by listed pharmacies.</p></div>
+              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>{userCoordinates ? "Nearby pharmacies, closest first." : "Prices and stock reported by listed pharmacies."}</p></div>
               <label className="sort-control"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option><option value="rating">Pharmacy rating</option></select></label>
             </div>
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
             {medicines.length ? <div className="medicine-grid">{medicines.map((medicine) =>
-              <MedicineCard key={medicine.id} medicine={medicine} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
+              <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
               : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
           </section>
           <section className="how-section">
@@ -263,7 +326,7 @@ function App() {
       {authOpen && <Modal title={authMode === "login" ? "Welcome back" : "Create your account"} onClose={() => setAuthOpen(false)}>
         <p className="modal-intro">{authMode === "login" ? "Sign in to manage your searches and saved pharmacies." : "Join Medlytic to find care closer to home."}</p>
         <form className="stack-form" onSubmit={handleAuth}>
-          {authMode === "register" && <><label>Your name<input name="name" required autoComplete="name" /></label><label>I am a<select value={authRole} onChange={(event) => setAuthRole(event.target.value)}><option value="patient">Patient</option><option value="owner">Medical store owner</option></select></label>{authRole === "owner" && <><label>Pharmacy name<input name="pharmacyName" required /></label><label>Area / city<input name="location" required /></label></>}</>}
+          {authMode === "register" && <><label>Your name<input name="name" required autoComplete="name" /></label><label>I am a<select value={authRole} onChange={(event) => { setAuthRole(event.target.value); setRegistrationCoordinates(null); }}><option value="patient">Patient</option><option value="owner">Medical store owner</option></select></label>{authRole === "owner" && <><label>Pharmacy name<input name="pharmacyName" required /></label><label>Store location<input name="location" required placeholder="Street address, area or city" onChange={() => setRegistrationCoordinates(null)} /></label><button className="button button-outline button-small location-action" type="button" onClick={async (event) => { const button = event.currentTarget; button.disabled = true; button.textContent = "Locating store…"; try { const coordinates = await getCurrentPosition(); setRegistrationCoordinates(coordinates); const address = await reverseGeocode(coordinates); const locationInput = button.form.elements.location; locationInput.value = address; } catch (err) { setError(err.message); } finally { button.disabled = false; button.textContent = "Use current store location"; } }}>Use current store location</button><small className="map-attribution">Location lookup © OpenStreetMap</small></>}</>}
           <label>Email address<input name="email" type="email" required autoComplete="email" /></label>
           <label>Password<input name="password" type="password" required minLength="8" autoComplete={authMode === "login" ? "current-password" : "new-password"} /></label>
           {error && <div className="alert alert-error" role="alert">{error}</div>}
@@ -284,13 +347,18 @@ function App() {
   );
 }
 
-function MedicineCard({ medicine, onDetails, onReserve, onSave, onRate }) {
+function MedicineCard({ medicine, userCoordinates, onDetails, onReserve, onSave, onRate }) {
   const [rating, setRating] = useState("5");
+  const destination = Number.isFinite(medicine.latitude) && Number.isFinite(medicine.longitude)
+    ? `${medicine.latitude},${medicine.longitude}`
+    : medicine.address || medicine.location;
+  const directions = new URLSearchParams({ api: "1", destination });
+  if (userCoordinates) directions.set("origin", `${userCoordinates.latitude},${userCoordinates.longitude}`);
   return <article className="medicine-card">
     <div className="medicine-card-top"><span className="medicine-icon">✚</span><span className={medicine.stock > 0 ? "stock-pill" : "stock-pill out"}>{medicine.stock > 0 ? "In stock" : "Out of stock"}</span></div>
     <div className="medicine-name"><h3>{medicine.name}</h3><p>{medicine.genericName} · {medicine.category}</p></div>
-    <div className="pharmacy-summary"><span className="pharmacy-icon">⌂</span><span><b>{medicine.pharmacy}</b><small>⌖ {medicine.location}</small></span><span className="rating">★ {medicine.rating}</span></div>
-    <a className="map-link" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(medicine.address || medicine.location)}`} target="_blank" rel="noreferrer">View on map ↗</a>
+    <div className="pharmacy-summary"><span className="pharmacy-icon">⌂</span><span><b>{medicine.pharmacy}</b><small>⌖ {medicine.location}{Number.isFinite(medicine.distanceKm) ? ` · ${medicine.distanceKm.toFixed(1)} km away` : ""}</small></span><span className="rating">★ {medicine.rating}</span></div>
+    <a className="map-link" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Get directions ↗</a>
     <div className="card-divider" /><div className="price-row"><span>Price per pack</span><strong>₹{medicine.price.toFixed(2)}</strong></div>
     <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock} onClick={onReserve}>Reserve</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
     <div className="rate-control"><select aria-label={`Rating for ${medicine.pharmacy}`} value={rating} onChange={(event) => setRating(event.target.value)}><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select><button className="text-button rate-link" onClick={() => onRate(Number(rating))}>Rate pharmacy</button></div>
@@ -369,7 +437,17 @@ function PharmacyCard({ pharmacy }) {
 }
 
 function StoreProfileEditor({ pharmacy, token, onRefresh, onError, onNotice }) {
-  const [profile, setProfile] = useState({ name: pharmacy.name, location: pharmacy.location, address: pharmacy.address, phone: pharmacy.phone });
+  const [profile, setProfile] = useState({ name: pharmacy.name, location: pharmacy.location, address: pharmacy.address, phone: pharmacy.phone, latitude: pharmacy.latitude ?? null, longitude: pharmacy.longitude ?? null });
+  const [locating, setLocating] = useState(false);
+  const locateStore = async () => {
+    setLocating(true);
+    try {
+      const coordinates = await getCurrentPosition();
+      const address = await reverseGeocode(coordinates);
+      setProfile({ ...profile, ...coordinates, location: address, address });
+    } catch (err) { onError(err.message); }
+    finally { setLocating(false); }
+  };
   const submit = async (event) => {
     event.preventDefault();
     try {
@@ -378,7 +456,7 @@ function StoreProfileEditor({ pharmacy, token, onRefresh, onError, onNotice }) {
       onRefresh();
     } catch (err) { onError(err.message); }
   };
-  return <div className="panel store-profile-panel"><h3>Pharmacy profile</h3><form className="store-profile-form" onSubmit={submit}><label>Store name<input required value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></label><label>Location<input required value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value })} /></label><label>Address<input required value={profile.address} onChange={(e) => setProfile({ ...profile, address: e.target.value })} /></label><label>Phone<input required value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} /></label><button className="button button-outline button-small" type="submit">Save profile</button></form></div>;
+  return <div className="panel store-profile-panel"><h3>Pharmacy profile</h3><form className="store-profile-form" onSubmit={submit}><label>Store name<input required value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></label><label>Location<input required value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value, latitude: null, longitude: null })} /></label><label>Address<input required value={profile.address} onChange={(e) => setProfile({ ...profile, address: e.target.value })} /></label><label>Phone<input required value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} /></label><button className="button button-outline button-small" type="button" onClick={locateStore} disabled={locating}>{locating ? "Locating…" : "Use current store location"}</button><small className="map-attribution">Location lookup © OpenStreetMap</small><button className="button button-outline button-small" type="submit">Save profile</button></form></div>;
 }
 
 function ProfilePanel({ profile, token, onChange, onError, onNotice }) {

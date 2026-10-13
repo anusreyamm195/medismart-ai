@@ -20,9 +20,9 @@ const initialData = () => ({
     { id: "user-owner", name: "Maya Patel", email: "owner@medlytic.local", passwordHash: hashPassword("Owner123!"), role: "owner", active: true },
   ],
   pharmacies: [
-    { id: "pharmacy-green-cross", ownerId: "user-owner", name: "Green Cross Pharmacy", location: "Indiranagar, Bengaluru", address: "12 100 Feet Road, Indiranagar, Bengaluru", phone: "+91 80 4000 1001", status: "approved", rating: 4.8, createdAt: new Date().toISOString() },
-    { id: "pharmacy-city-care", ownerId: null, name: "City Care Medicals", location: "Koramangala, Bengaluru", address: "80 Feet Road, Koramangala, Bengaluru", phone: "+91 80 4000 1002", status: "approved", rating: 4.5, createdAt: new Date().toISOString() },
-    { id: "pharmacy-wellness", ownerId: null, name: "Wellness Drugstore", location: "Whitefield, Bengaluru", address: "Main Road, Whitefield, Bengaluru", phone: "+91 80 4000 1003", status: "approved", rating: 4.6, createdAt: new Date().toISOString() },
+    { id: "pharmacy-green-cross", ownerId: "user-owner", name: "Green Cross Pharmacy", location: "Indiranagar, Bengaluru", address: "12 100 Feet Road, Indiranagar, Bengaluru", phone: "+91 80 4000 1001", latitude: 12.9719, longitude: 77.6412, status: "approved", rating: 4.8, createdAt: new Date().toISOString() },
+    { id: "pharmacy-city-care", ownerId: null, name: "City Care Medicals", location: "Koramangala, Bengaluru", address: "80 Feet Road, Koramangala, Bengaluru", phone: "+91 80 4000 1002", latitude: 12.9352, longitude: 77.6245, status: "approved", rating: 4.5, createdAt: new Date().toISOString() },
+    { id: "pharmacy-wellness", ownerId: null, name: "Wellness Drugstore", location: "Whitefield, Bengaluru", address: "Main Road, Whitefield, Bengaluru", phone: "+91 80 4000 1003", latitude: 12.9698, longitude: 77.75, status: "approved", rating: 4.6, createdAt: new Date().toISOString() },
   ],
   medicines: [
     { id: "med-paracetamol", name: "Dolo 650", genericName: "Paracetamol 650 mg", category: "Pain relief", info: "Paracetamol is commonly used for pain and fever. Follow the package directions and avoid taking multiple products that contain paracetamol." },
@@ -161,6 +161,12 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         if (!roles.includes(current.role)) fail(403, "You do not have permission to perform this action.");
         return current;
       };
+      const coordinate = (value, label, minimum, maximum) => {
+        if (value === undefined || value === null || value === "") return null;
+        const number = Number(value);
+        if (!Number.isFinite(number) || number < minimum || number > maximum) fail(400, `${label} must be between ${minimum} and ${maximum}.`);
+        return number;
+      };
 
       if (method === "GET" && pathname === "/api/health") return send(200, { status: "ok" });
       if (method === "GET" && pathname === "/api/medicines") {
@@ -168,6 +174,11 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         const location = (url.searchParams.get("location") || "").trim().toLowerCase();
         const maxPrice = url.searchParams.has("maxPrice") ? Number(url.searchParams.get("maxPrice")) : Infinity;
         const sort = url.searchParams.get("sort") || "price-asc";
+        const hasLatitude = url.searchParams.has("latitude");
+        const hasLongitude = url.searchParams.has("longitude");
+        if (hasLatitude !== hasLongitude) fail(400, "Both latitude and longitude are required for nearby search.");
+        const searchLatitude = hasLatitude ? coordinate(url.searchParams.get("latitude"), "Latitude", -90, 90) : null;
+        const searchLongitude = hasLongitude ? coordinate(url.searchParams.get("longitude"), "Longitude", -180, 180) : null;
         if (!Number.isFinite(maxPrice) && maxPrice !== Infinity || maxPrice < 0) fail(400, "Maximum price must be a non-negative number.");
         let listings = data.listings.flatMap((listing) => {
           const medicine = data.medicines.find((item) => item.id === listing.medicineId);
@@ -175,16 +186,26 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
           if (!medicine || !pharmacy) return [];
           const searchable = `${medicine.name} ${medicine.genericName} ${medicine.category} ${pharmacy.name}`.toLowerCase();
           if (q && !searchable.includes(q)) return [];
-          if (location && !pharmacy.location.toLowerCase().includes(location)) return [];
+          if (!hasLatitude && location && !pharmacy.location.toLowerCase().includes(location)) return [];
           if (listing.price > maxPrice) return [];
-          return [{ ...pharmacySummary(pharmacy), ...medicine, id: listing.id, medicineId: medicine.id, pharmacyId: pharmacy.id, pharmacy: pharmacy.name, price: Number(listing.price), stock: Number(listing.stock) }];
+          const distanceKm = hasLatitude && Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
+            ? calculateDistanceKm(searchLatitude, searchLongitude, pharmacy.latitude, pharmacy.longitude)
+            : null;
+          return [{ ...pharmacySummary(pharmacy), ...medicine, id: listing.id, medicineId: medicine.id, pharmacyId: pharmacy.id, pharmacy: pharmacy.name, price: Number(listing.price), stock: Number(listing.stock), distanceKm }];
         });
         if (user?.role === "patient" && q) {
           data.history.unshift({ id: id("search"), userId: user.id, query: url.searchParams.get("q").trim(), createdAt: new Date().toISOString() });
           data.history = data.history.slice(0, 3000);
           store.save();
         }
-        listings.sort((a, b) => sort === "price-desc" ? b.price - a.price : sort === "rating" ? b.rating - a.rating : a.price - b.price);
+        listings.sort((a, b) => {
+          if (hasLatitude && a.distanceKm !== b.distanceKm) {
+            if (a.distanceKm === null) return 1;
+            if (b.distanceKm === null) return -1;
+            return a.distanceKm - b.distanceKm;
+          }
+          return sort === "price-desc" ? b.price - a.price : sort === "rating" ? b.rating - a.rating : a.price - b.price;
+        });
         return send(200, { medicines: listings, total: listings.length });
       }
       const medicineRoute = pathname.match(/^\/api\/medicines\/([^/]+)$/);
@@ -213,7 +234,10 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         data.users.push(newUser);
         let message = "Your account is ready.";
         if (role === "owner") {
-          const pharmacy = { id: id("pharmacy"), ownerId: newUser.id, name: text(body.pharmacyName, "Pharmacy name", 100), location: text(body.location, "Location", 160), address: text(body.address || body.location, "Address", 200), phone: text(body.phone || "Not provided", "Phone", 32), status: "pending", rating: 0, createdAt: new Date().toISOString() };
+          const latitude = coordinate(body.latitude, "Latitude", -90, 90);
+          const longitude = coordinate(body.longitude, "Longitude", -180, 180);
+          if ((latitude === null) !== (longitude === null)) fail(400, "Both latitude and longitude are required for a store location.");
+          const pharmacy = { id: id("pharmacy"), ownerId: newUser.id, name: text(body.pharmacyName, "Pharmacy name", 100), location: text(body.location, "Location", 160), address: text(body.address || body.location, "Address", 200), phone: text(body.phone || "Not provided", "Phone", 32), latitude, longitude, status: "pending", rating: 0, createdAt: new Date().toISOString() };
           data.pharmacies.push(pharmacy);
           message = "Your account is ready. Your pharmacy registration is awaiting admin approval.";
         }
@@ -328,6 +352,13 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         if (body.location !== undefined) pharmacy.location = text(body.location, "Location", 160);
         if (body.address !== undefined) pharmacy.address = text(body.address, "Address", 200);
         if (body.phone !== undefined) pharmacy.phone = text(body.phone, "Phone", 32);
+        if (body.latitude !== undefined || body.longitude !== undefined) {
+          const latitude = coordinate(body.latitude, "Latitude", -90, 90);
+          const longitude = coordinate(body.longitude, "Longitude", -180, 180);
+          if ((latitude === null) !== (longitude === null)) fail(400, "Both latitude and longitude are required for a store location.");
+          pharmacy.latitude = latitude;
+          pharmacy.longitude = longitude;
+        }
         store.save();
         return send(200, { pharmacy });
       }
@@ -442,7 +473,16 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
 }
 
 function pharmacySummary(pharmacy) {
-  return { pharmacyId: pharmacy.id, pharmacy: pharmacy.name, name: pharmacy.name, location: pharmacy.location, address: pharmacy.address, phone: pharmacy.phone, rating: Number(pharmacy.rating || 0) };
+  return { pharmacyId: pharmacy.id, pharmacy: pharmacy.name, name: pharmacy.name, location: pharmacy.location, address: pharmacy.address, latitude: pharmacy.latitude ?? null, longitude: pharmacy.longitude ?? null, phone: pharmacy.phone, rating: Number(pharmacy.rating || 0) };
+}
+
+function calculateDistanceKm(latitude, longitude, destinationLatitude, destinationLongitude) {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const latitudeDelta = radians(destinationLatitude - latitude);
+  const longitudeDelta = radians(destinationLongitude - longitude);
+  const value = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(radians(latitude)) * Math.cos(radians(destinationLatitude)) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 }
 
 async function readBody(req) {

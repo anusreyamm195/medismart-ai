@@ -65,8 +65,13 @@ h1, h2, h3, p { margin-top: 0; }
 .search-field input { width: 100%; min-width: 0; height: 42px; border: 0; outline: 0; color: #274940; font-size: 12px; }
 .search-field input::placeholder { color: #9aa9a2; }
 .location-field { max-width: 255px; border-left: 1px solid #e8eeea; }
+.locate-button { flex: 0 0 auto; min-height: 42px; padding: 0 12px; font-size: 10px; }
 .search-submit { min-width: 184px; height: 49px; }
 .search-submit span { font-size: 17px; }
+.map-attribution { color: #89988f; font-size: 9px; }
+.map-attribution a, a.map-attribution { color: #638574; }
+.search-attribution { position: absolute; z-index: 5; bottom: -49px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+.location-action { justify-self: start; }
 .content-section { max-width: 1120px; margin: 0 auto; padding: 94px 30px 70px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
 .section-heading h2 { margin: 10px 0 6px; color: #1b4039; font: 750 28px/1.2 Manrope, sans-serif; letter-spacing: -.9px; }
@@ -198,7 +203,7 @@ h1, h2, h3, p { margin-top: 0; }
 @media (max-width: 900px) {
   .topbar { gap: 20px; padding: 0 20px; }
   .main-nav { gap: 14px; }
-  .hero-art { right: 2%; opacity: .72; transform: scale(.85); transform-origin: right center; }
+  .hero-art { display: none; }
   .hero { padding-left: 7%; }
   .medicine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .how-section { grid-template-columns: 1fr; gap: 25px; }
@@ -223,7 +228,9 @@ h1, h2, h3, p { margin-top: 0; }
   .search-form { bottom: -80px; flex-direction: column; align-items: stretch; width: calc(100% - 34px); padding: 11px; }
   .search-field { min-height: 39px; }
   .location-field { max-width: none; border-top: 1px solid #edf0ed; border-left: 0; }
+  .locate-button { width: 100%; min-height: 38px; }
   .search-submit { width: 100%; min-height: 43px; }
+  .search-attribution { bottom: -99px; }
   .content-section { padding: 122px 17px 48px; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 15px; margin-bottom: 20px; }
   .section-heading h2 { font-size: 24px; }
