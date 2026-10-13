@@ -1,20 +1,20 @@
 # Medlytic
 
-Medlytic is a React medicine-finder frontend with a dependency-free Node.js REST API. The local API persists its demo data in `server/store.json` (ignored by git). It is intended as a runnable project prototype, not as a production medical or pharmacy system.
+Medlytic is a React medicine-finder frontend with a Node.js REST API. All persistent application data is stored in MongoDB. It is intended as a runnable project prototype, not as a production medical or pharmacy system.
+
+Authentication and profile endpoints are handled in `server/routes/auth.routes.js`; medicine search, details, and owner inventory endpoints are handled in `server/routes/medicine.routes.js`. `server/index.js` composes shared request handling and the remaining API routes.
 
 ## Run locally
 
-Use Node.js 20.19 or newer. Open two terminals in this project folder:
-
-```sh
-npm run server
-```
+Use Node.js 20.19 or newer and add `MONGO_URI` to the root `.env` file. From the project folder, start the API and frontend together:
 
 ```sh
 npm run dev
 ```
 
-The API binds to `127.0.0.1:3002` by default, and Vite forwards `/api` requests there. Set `PORT` to change the API port or `HOST` to change its bind interface; update the Vite proxy target if you use another API host or port.
+This starts the API and Vite in one terminal. Press Ctrl+C to stop both. To run only the API, use `npm run server`.
+
+The API connects to the MongoDB database named `Medlytics_Database`. Users are stored in `user`, medicine catalogue entries in `medicine`, pharmacy inventory in `listing`, and pharmacy profiles, reservations, ratings, reports, search history, saved pharmacies, and audit events in `application_state`. Nearby search uses MongoDB pharmacy coordinates and offers 5, 10, 20, or 50 km radii (10 km by default), listing only in-stock medicines from approved pharmacies with coordinates. `MONGO_URI` supplies the connection credentials and host. The API binds to `127.0.0.1:3002` by default, and Vite forwards `/api` requests there. Set `PORT` to change the API port or `HOST` to change its bind interface; update the Vite proxy target if you use another API host or port.
 
 ## Demo accounts
 
@@ -24,7 +24,7 @@ The API binds to `127.0.0.1:3002` by default, and Vite forwards `/api` requests 
 | Medical store owner | `owner@medlytic.local` | `Owner123!` |
 | Admin | `admin@medlytic.local` | `Admin123!` |
 
-These accounts are created the first time the API starts with an empty data store. Do not use demo credentials or the local JSON store for a deployed service. The store contains personal account data and password hashes.
+These accounts are stored in MongoDB for development. Do not use demo credentials or this prototype for a deployed service.
 
 ## Included workflows
 
@@ -32,7 +32,7 @@ These accounts are created the first time the API starts with an empty data stor
 - **Store owners:** register a pharmacy (new stores require admin approval), edit the pharmacy profile, add/edit medicine listings, update stock and prices, and see inventory statistics and reservations.
 - **Admins:** view platform counts, approve/reject pharmacy registrations, suspend/reactivate accounts, review/resolve reports, and inspect the audit log.
 
-Medicine facts and same-ingredient brand suggestions come from the local seed catalogue; there is no external generative-AI service configured. The information is general awareness only, not medical advice or a recommendation to switch medicines. Patients should confirm any medicine or alternative with a qualified clinician or pharmacist.
+Medicine facts and same-ingredient brand suggestions are stored in MongoDB; there is no external generative-AI service configured. The information is general awareness only, not medical advice or a recommendation to switch medicines. Patients should confirm any medicine or alternative with a qualified clinician or pharmacist.
 
 ## API overview
 

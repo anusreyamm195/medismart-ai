@@ -34,13 +34,23 @@ function pharmacySummary(p) {
   };
 }
 
-export async function searchMedicines({ q = "", location = "", maxPrice = "", sort = "price-asc", latitude, longitude } = {}, currentUser = null) {
+function distanceBetweenKm(latitude, longitude, destinationLatitude, destinationLongitude) {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const latitudeDelta = radians(destinationLatitude - latitude);
+  const longitudeDelta = radians(destinationLongitude - longitude);
+  const value = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(radians(latitude)) * Math.cos(radians(destinationLatitude)) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+export async function searchMedicines({ q = "", location = "", maxPrice = "", sort = "price-asc", latitude, longitude, radiusKm = 10 } = {}, currentUser = null) {
   if (!supabase) {
     const params = new URLSearchParams();
     if (q.trim()) params.set("q", q.trim());
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
       params.set("latitude", latitude);
       params.set("longitude", longitude);
+      params.set("radiusKm", radiusKm);
     } else if (location.trim()) params.set("location", location.trim());
     if (maxPrice !== "") params.set("maxPrice", maxPrice);
     if (sort) params.set("sort", sort);
@@ -70,6 +80,8 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
         name,
         location,
         address,
+        latitude,
+        longitude,
         phone,
         status,
         rating,
@@ -87,9 +99,16 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
       const searchable = `${med.name} ${med.generic_name} ${med.category} ${pharm.name}`.toLowerCase();
 
       if (cleanQ && !searchable.includes(cleanQ)) return [];
-      if (cleanLoc && !pharm.location.toLowerCase().includes(cleanLoc)) return [];
+      if (!(Number.isFinite(latitude) && Number.isFinite(longitude))
+        && cleanLoc && !pharm.location.toLowerCase().includes(cleanLoc)) return [];
       const price = Number(l.price);
       if (Number.isFinite(parsedMax) && price > parsedMax) return [];
+      const distanceKm = Number.isFinite(latitude) && Number.isFinite(longitude)
+        && Number.isFinite(Number(pharm.latitude)) && Number.isFinite(Number(pharm.longitude))
+        ? distanceBetweenKm(latitude, longitude, Number(pharm.latitude), Number(pharm.longitude))
+        : null;
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)
+        && (distanceKm === null || distanceKm > radiusKm || Number(l.stock) <= 0)) return [];
 
       return [{
         id: l.id,
@@ -99,6 +118,7 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
         location: pharm.location,
         address: pharm.address,
         rating: Number(pharm.rating) || 0,
+        distanceKm,
         price,
         stock: Number(l.stock) || 0,
         name: med.name,

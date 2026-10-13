@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import "leaflet/dist/leaflet.css";
 import "./medlytic.css";
+import StoreLocationPicker from "./components/StoreLocationPicker";
 import {
   searchMedicines,
   getMedicineDetails,
@@ -69,8 +71,12 @@ function App() {
   const [userCoordinates, setUserCoordinates] = useState(null);
   const [locating, setLocating] = useState(false);
   const [registrationCoordinates, setRegistrationCoordinates] = useState(null);
+  const [registrationLocation, setRegistrationLocation] = useState("");
+  const [registrationLocating, setRegistrationLocating] = useState(false);
+  const registrationLocationRequest = useRef(0);
   const [maxPrice, setMaxPrice] = useState("");
   const [sort, setSort] = useState("price-asc");
+  const [radiusKm, setRadiusKm] = useState(10);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -88,7 +94,26 @@ function App() {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [reportTarget, setReportTarget] = useState(null);
 
-  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates) => {
+  const selectRegistrationLocation = async (coordinates) => {
+    setRegistrationCoordinates(coordinates);
+    const request = ++registrationLocationRequest.current;
+    const area = await reverseGeocode(coordinates);
+    if (request === registrationLocationRequest.current) setRegistrationLocation(area);
+  };
+
+  const locateRegistrationStore = async () => {
+    setRegistrationLocating(true);
+    setAuthError("");
+    try {
+      await selectRegistrationLocation(await getCurrentPosition());
+    } catch (err) {
+      setAuthError(err.message);
+    } finally {
+      setRegistrationLocating(false);
+    }
+  };
+
+  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates, searchRadiusKm = radiusKm) => {
     setLoading(true);
     setError("");
     try {
@@ -100,6 +125,7 @@ function App() {
           sort,
           latitude: coordinates?.latitude,
           longitude: coordinates?.longitude,
+          radiusKm: searchRadiusKm,
         },
         user
       );
@@ -110,7 +136,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [query, location, userCoordinates, maxPrice, sort, user]);
+  }, [query, location, userCoordinates, maxPrice, sort, radiusKm, user]);
 
   // Initial data loading & user session check
   useEffect(() => {
@@ -168,7 +194,7 @@ function App() {
       setUserCoordinates(coordinates);
       const nearbyLocation = await reverseGeocode(coordinates);
       setLocation(nearbyLocation);
-      await search(query, nearbyLocation, coordinates);
+      await search(query, nearbyLocation, coordinates, radiusKm);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -197,8 +223,12 @@ function App() {
         setNotice(data.message || `Welcome, ${data.user.name}.`);
         setError("");
       } else {
+        if (authRole === "owner" && !registrationCoordinates) {
+          throw new Error("Pin your store location on the map before creating an owner account.");
+        }
         const registration = { ...payload, role: authRole };
-        if (authRole === "owner" && registrationCoordinates) {
+        if (authRole === "owner") {
+          registration.location = registrationLocation || payload.location;
           registration.latitude = registrationCoordinates.latitude;
           registration.longitude = registrationCoordinates.longitude;
         }
@@ -325,7 +355,7 @@ function App() {
         </nav>
         <div className="account-actions">
           {user ? <><span className="user-greeting">{user.name}</span><button className="button button-outline button-small" onClick={signOut}>Sign out</button></> :
-            <><button className="button button-quiet" onClick={() => { setAuthMode("login"); setAuthError(""); setAuthOpen(true); }}>Log in</button><button className="button button-primary button-small" onClick={() => { setAuthMode("register"); setAuthRole("patient"); setAuthError(""); setAuthOpen(true); }}>Create account</button></>}
+            <><button className="button button-quiet" onClick={() => { setAuthMode("login"); setAuthError(""); setAuthOpen(true); }}>Log in</button><button className="button button-primary button-small" onClick={() => { setAuthMode("register"); setAuthRole("patient"); setRegistrationCoordinates(null); setRegistrationLocation(""); setAuthError(""); setAuthOpen(true); }}>Create account</button></>}
         </div>
       </header>
 
@@ -357,8 +387,15 @@ function App() {
 
           <section className="content-section results-section">
             <div className="section-heading">
-              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>{userCoordinates ? "Nearby pharmacies, closest first." : "Prices and stock reported by listed pharmacies."}</p></div>
-              <label className="sort-control"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option><option value="rating">Pharmacy rating</option></select></label>
+              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>{userCoordinates ? `In-stock medicines within ${radiusKm} km, closest first.` : "Prices and stock reported by listed pharmacies."}</p></div>
+              <div className="result-controls">
+                {userCoordinates && <label className="sort-control"><span>Within</span><select aria-label="Nearby search radius" value={radiusKm} onChange={(event) => {
+                  const nextRadius = Number(event.target.value);
+                  setRadiusKm(nextRadius);
+                  search(query, location, userCoordinates, nextRadius);
+                }}><option value="5">5 km</option><option value="10">10 km</option><option value="20">20 km</option><option value="50">50 km</option></select></label>}
+                <label className="sort-control"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option><option value="rating">Pharmacy rating</option></select></label>
+              </div>
             </div>
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
@@ -400,44 +437,44 @@ function App() {
             {authMode === "register" && (
               <>
                 <label>
-                  Your name
-                  <input name="name" required autoComplete="name" disabled={authLoading} />
-                </label>
-                <label>
                   I am a
                   <select
                     value={authRole}
-                    onChange={(event) => { setAuthRole(event.target.value); setRegistrationCoordinates(null); }}
+                    onChange={(event) => { setAuthRole(event.target.value); setRegistrationCoordinates(null); setRegistrationLocation(""); }}
                     disabled={authLoading}
                   >
                     <option value="patient">Patient</option>
                     <option value="owner">Medical store owner</option>
                   </select>
                 </label>
+                <label>
+                  Your name
+                  <input name="name" required autoComplete="name" disabled={authLoading} />
+                </label>
                 {authRole === "owner" && (
                   <>
+                    <label>
+                      Store location
+                      <input
+                        name="location"
+                        required
+                        placeholder="Select a point on the map"
+                        value={registrationLocation}
+                        onChange={(event) => setRegistrationLocation(event.target.value)}
+                        disabled={authLoading}
+                      />
+                    </label>
+                    <StoreLocationPicker
+                      position={registrationCoordinates}
+                      onSelect={selectRegistrationLocation}
+                      onUseCurrentLocation={locateRegistrationStore}
+                      locating={registrationLocating}
+                      disabled={authLoading}
+                    />
                     <label>
                       Pharmacy name
                       <input name="pharmacyName" required disabled={authLoading} />
                     </label>
-                    <label>
-                      Store location
-                      <input name="location" required placeholder="Area or city" disabled={authLoading} onChange={() => setRegistrationCoordinates(null)} />
-                    </label>
-                    <button className="button button-outline button-small location-action" type="button" disabled={authLoading} onClick={async (event) => {
-                      const button = event.currentTarget;
-                      button.disabled = true;
-                      try {
-                        const coordinates = await getCurrentPosition();
-                        setRegistrationCoordinates(coordinates);
-                        button.form.elements.location.value = await reverseGeocode(coordinates);
-                      } catch (err) {
-                        setAuthError(err.message);
-                      } finally {
-                        button.disabled = authLoading;
-                      }
-                    }}>Use current store location</button>
-                    <small className="map-attribution">Location lookup © OpenStreetMap</small>
                   </>
                 )}
               </>

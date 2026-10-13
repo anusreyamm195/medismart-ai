@@ -76,6 +76,7 @@ h1, h2, h3, p { margin-top: 0; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
 .section-heading h2 { margin: 10px 0 6px; color: #1b4039; font: 750 28px/1.2 Manrope, sans-serif; letter-spacing: -.9px; }
 .section-heading p { margin: 0; color: #829089; font-size: 12px; }
+.result-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .sort-control { display: flex; align-items: center; gap: 10px; color: #8a9992; font-size: 11px; }
 .sort-control select { height: 38px; border: 1px solid #e0e8e2; border-radius: 7px; padding: 0 10px; background: white; color: #426257; font-size: 11px; }
 .price-filter { display: flex; align-items: center; gap: 8px; width: fit-content; margin: -8px 0 18px; color: #718178; font-size: 11px; }
@@ -142,6 +143,13 @@ h1, h2, h3, p { margin-top: 0; }
 .stack-form { display: flex; flex-direction: column; gap: 12px; }
 .stack-form label { display: flex; flex-direction: column; gap: 6px; color: #64786d; font-size: 10px; font-weight: 600; }
 .stack-form input, .stack-form select { width: 100%; height: 39px; border: 1px solid #dfe8e0; border-radius: 7px; padding: 0 10px; background: #fff; color: #315449; font-size: 12px; }
+.store-location-picker { overflow: hidden; border: 1px solid #dfe8e0; border-radius: 9px; }
+.store-location-picker .leaflet-container { width: 100%; height: 210px; z-index: 0; }
+.store-location-picker .leaflet-control-attribution { font-size: 8px; }
+.store-location-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px; background: #f8faf7; }
+.store-location-actions small { color: #819087; font-size: 9px; line-height: 1.4; }
+.store-map-marker { display: grid; place-items: center; border-radius: 50% 50% 50% 0; background: #176752; box-shadow: 0 2px 7px #173a3766; transform: rotate(-45deg); }
+.store-map-marker span { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .store-profile-panel { margin: 18px 0 15px; }
 .store-profile-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 12px; }
@@ -208,6 +216,9 @@ h1, h2, h3, p { margin-top: 0; }
   .medicine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .how-section { grid-template-columns: 1fr; gap: 25px; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .result-controls { align-items: flex-start; flex-direction: column; gap: 8px; }
 }
 @media (max-width: 640px) {
   body { min-width: 320px; }
