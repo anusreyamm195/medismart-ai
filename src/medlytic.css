@@ -382,11 +382,8 @@ h1, h2, h3, p { margin-top: 0; }
   .hero-art { display: none; }
   .hero { padding-left: 7%; }
   .medicine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-<<<<<<< HEAD
   .pharmacy-result-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-=======
   .nearby-shop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
->>>>>>> 0f4c55864b721b0b526d7ccc5ed41d43bc35ccf4
   .how-section { grid-template-columns: 1fr; gap: 25px; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .owner-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -422,11 +419,8 @@ h1, h2, h3, p { margin-top: 0; }
   .section-heading h2 { font-size: 24px; }
   .sort-control { width: 100%; justify-content: space-between; }
   .medicine-grid { grid-template-columns: 1fr; gap: 11px; }
-<<<<<<< HEAD
   .pharmacy-result-grid { grid-template-columns: 1fr; gap: 11px; }
-=======
   .nearby-shop-grid { grid-template-columns: 1fr; }
->>>>>>> 0f4c55864b721b0b526d7ccc5ed41d43bc35ccf4
   .medicine-card { padding: 17px; }
   .how-section { padding: 42px 22px; }
   .how-section h2 { font-size: 23px; }
