@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import "./medlytic.css";
 import {
   searchMedicines,
+  getNearbyPharmacies,
   getMedicineDetails,
   signUpUser,
   loginUser,
@@ -64,6 +65,9 @@ function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("home");
   const [medicines, setMedicines] = useState([]);
+  const [nearbyPharmacies, setNearbyPharmacies] = useState([]);
+  const [nearbySearchLocation, setNearbySearchLocation] = useState("");
+  const [nearbySearchActive, setNearbySearchActive] = useState(false);
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
   const [userCoordinates, setUserCoordinates] = useState(null);
@@ -92,18 +96,24 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const data = await searchMedicines(
-        {
-          q: searchQuery,
-          location: locationQuery,
-          maxPrice,
-          sort,
-          latitude: coordinates?.latitude,
-          longitude: coordinates?.longitude,
-        },
-        user
-      );
+      const [data, pharmacyData] = await Promise.all([
+        searchMedicines(
+          {
+            q: searchQuery,
+            location: locationQuery,
+            maxPrice,
+            sort,
+            latitude: coordinates?.latitude,
+            longitude: coordinates?.longitude,
+          },
+          user
+        ),
+        getNearbyPharmacies(locationQuery, coordinates),
+      ]);
       setMedicines(data.medicines);
+      setNearbyPharmacies(pharmacyData);
+      setNearbySearchLocation(locationQuery);
+      setNearbySearchActive(Boolean(coordinates || locationQuery.trim()));
       setView("home");
     } catch (err) {
       setError(err.message || "Failed to search medicines.");
@@ -363,6 +373,7 @@ function App() {
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
+            {nearbySearchActive && <NearbyPharmacies pharmacies={nearbyPharmacies} location={nearbySearchLocation} coordinates={userCoordinates} />}
             {medicines.length ? <div className="medicine-grid">{medicines.map((medicine) =>
               <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
               : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
@@ -378,6 +389,8 @@ function App() {
         {view === "owner" && <OwnerDashboard data={ownerData} user={user} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
         {view === "admin" && <AdminDashboard data={adminData} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
       </main>
+
+      {view === "home" && !authOpen && !detail && !reportTarget && <FloatingMedicineChatbot medicines={medicines} currentQuery={query} />}
 
       <footer className="site-footer"><a className="brand footer-brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}><span className="brand-mark">✚</span><span>medlytic<span className="brand-dot">.</span></span></a><span>Medicine information is for general awareness only. Always follow your clinician’s advice.</span><span>© 2026 Medlytic</span></footer>
 
@@ -486,6 +499,7 @@ function App() {
       {detail && <Modal title={detail.medicine.name} onClose={() => setDetail(null)}>
         <div className="detail-generic">{detail.medicine.genericName} · {detail.medicine.category}</div>
         <div className="detail-info"><h3>About this medicine</h3><p>{detail.medicine.info || "Ask a pharmacist or clinician for medicine-specific guidance."}</p><div className="medical-disclaimer">General information only — not a diagnosis or treatment recommendation. Do not start, stop, or change medication without advice from a qualified health professional.</div></div>
+        <MedicineChatbot medicine={detail.medicine} alternatives={detail.alternatives} />
         <div className="alternatives"><h3>Similar options to discuss with a pharmacist</h3><p>{detail.alternatives.length ? detail.alternatives.join(", ") : "No alternatives are listed in the local catalogue."}</p><small>Similar active ingredient does not mean medicines are interchangeable. Confirm suitability with a clinician or pharmacist.</small></div>
         <h3 className="availability-heading">Available listings</h3>{detail.listings.map((listing) => <div className="listing-line" key={listing.id}><span><b>{listing.pharmacy}</b><small>{listing.location} · ★ {listing.rating}</small></span><strong>₹{listing.price.toFixed(2)}</strong></div>)}
         {user?.role === "patient" && <button className="text-button report-link" onClick={() => { setReportTarget({ name: detail.medicine.name }); setDetail(null); }}>Report incorrect information</button>}
@@ -512,6 +526,119 @@ function MedicineCard({ medicine, userCoordinates, onDetails, onReserve, onSave,
     <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock} onClick={onReserve}>Reserve</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
     <div className="rate-control"><select aria-label={`Rating for ${medicine.pharmacy}`} value={rating} onChange={(event) => setRating(event.target.value)}><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select><button className="text-button rate-link" onClick={() => onRate(Number(rating))}>Rate pharmacy</button></div>
   </article>;
+}
+
+function medicineChatReply(question, medicine, alternatives) {
+  const normalized = question.toLowerCase();
+  const description = medicine.info || "There is no detailed description in the catalogue yet.";
+
+  if (/dose|dosage|how many|how much|when.*take|take.*when/.test(normalized)) {
+    return "I can’t recommend a dose or schedule. The right directions depend on the person and product. Follow the package label and ask a pharmacist or clinician.";
+  }
+  if (/side effect|safe|safety|reaction|allerg/.test(normalized)) {
+    return "The catalogue doesn’t contain verified side-effect or personal safety guidance for this medicine. Please ask a pharmacist or clinician, especially if you take other medicines or have a health condition.";
+  }
+  if (/replace|substitut|alternative|instead|interchange/.test(normalized)) {
+    return alternatives.length
+      ? `The catalogue lists ${alternatives.join(", ")} as similar options. Similar does not mean interchangeable; ask a pharmacist or clinician before switching.`
+      : "No similar options are listed in the catalogue. Ask a pharmacist or clinician before changing medicines.";
+  }
+  if (/generic|ingredient|contain/.test(normalized)) {
+    return `${medicine.name} is listed with the generic ingredient: ${medicine.genericName}. Check the package and confirm with a pharmacist if you have questions.`;
+  }
+  if (/category|type/.test(normalized)) {
+    return `${medicine.name} is listed in the ${medicine.category} category.`;
+  }
+  return `${medicine.name}: ${description}`;
+}
+
+function MedicineChatbot({ medicine, alternatives }) {
+  const [open, setOpen] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState([]);
+
+  const ask = (text) => {
+    const cleanQuestion = text.trim();
+    if (!cleanQuestion) return;
+    setMessages((current) => [
+      ...current,
+      { role: "user", text: cleanQuestion },
+      { role: "assistant", text: medicineChatReply(cleanQuestion, medicine, alternatives) },
+    ]);
+    setQuestion("");
+  };
+
+  return <section className="medicine-chat-section">
+    <button className="button button-outline medicine-chat-toggle" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      {open ? "Close medicine chat" : "Ask about this medicine"}
+    </button>
+    {open && <div className="medicine-chat">
+      <div className="medicine-chat-heading"><strong>Medlytic medicine assistant</strong><span>Catalog-based information, not medical advice.</span></div>
+      <div className="medicine-chat-messages" aria-live="polite" aria-relevant="additions">
+        {!messages.length && <p className="chat-welcome">Ask about {medicine.name}, its listed ingredient, or its catalog description.</p>}
+        {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
+      </div>
+      <div className="medicine-chat-prompts">
+        <button type="button" onClick={() => ask("What is this medicine for?")}>What is it for?</button>
+        <button type="button" onClick={() => ask("What is the generic ingredient?")}>Generic ingredient</button>
+      </div>
+      <form className="medicine-chat-form" onSubmit={(event) => { event.preventDefault(); ask(question); }}>
+        <label className="sr-only" htmlFor="medicine-chat-question">Ask a question about this medicine</label>
+        <input id="medicine-chat-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about this medicine…" maxLength="300" />
+        <button className="button button-primary button-small" type="submit" disabled={!question.trim()}>Send</button>
+      </form>
+    </div>}
+  </section>;
+}
+
+function FloatingMedicineChatbot({ medicines, currentQuery }) {
+  const [open, setOpen] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState([]);
+
+  const ask = (text) => {
+    const cleanQuestion = text.trim();
+    if (!cleanQuestion) return;
+    const normalized = cleanQuestion.toLowerCase();
+    const findMedicine = (phrase) => medicines.find((item) =>
+      [item.name, item.genericName].some((term) => term && phrase.includes(term.toLowerCase()))
+    );
+    const selectedMedicine = findMedicine(normalized) || findMedicine(currentQuery.trim().toLowerCase());
+    const uniqueMedicines = [...new Map(medicines.map((item) => [item.medicineId || item.name, item])).values()];
+    const medicine = selectedMedicine || (uniqueMedicines.length === 1 ? uniqueMedicines[0] : null);
+    const answer = medicine
+      ? medicineChatReply(cleanQuestion, medicine, uniqueMedicines.filter((item) => item.genericName === medicine.genericName && item.name !== medicine.name).map((item) => item.name))
+      : "Which medicine would you like to know about? Include its name, for example, “What is Dolo 650 used for?”";
+
+    setMessages((current) => [
+      ...current,
+      { role: "user", text: cleanQuestion },
+      { role: "assistant", text: answer },
+    ]);
+    setQuestion("");
+  };
+
+  return <aside className="floating-medicine-chat" aria-label="Medicine assistant">
+    {open && <section className="floating-chat-panel" role="dialog" aria-label="Ask about a medicine">
+      <header className="floating-chat-header">
+        <div><strong>Medicine assistant</strong><small>Answers from Medlytic's medicine catalog</small></div>
+        <button className="floating-chat-close" type="button" aria-label="Close medicine assistant" onClick={() => setOpen(false)}>×</button>
+      </header>
+      <div className="floating-chat-messages" aria-live="polite" aria-relevant="additions">
+        {!messages.length && <p className="chat-welcome">Ask about a medicine’s use, generic ingredient, or catalog details. Include its name for a specific answer.</p>}
+        {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
+      </div>
+      <form className="medicine-chat-form floating-chat-form" onSubmit={(event) => { event.preventDefault(); ask(question); }}>
+        <label className="sr-only" htmlFor="floating-medicine-question">Ask about a medicine</label>
+        <input id="floating-medicine-question" autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about a medicine…" maxLength="300" />
+        <button className="button button-primary button-small" type="submit" disabled={!question.trim()}>Send</button>
+      </form>
+      <p className="floating-chat-disclaimer">General information only. For personal medical advice, contact a clinician.</p>
+    </section>}
+    <button className="floating-chat-launcher" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <span aria-hidden="true">✦</span>{open ? "Close chat" : "Ask about medicine"}
+    </button>
+  </aside>;
 }
 
 function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
@@ -609,6 +736,31 @@ function AdminDashboard({ data, currentAdminId, onRefresh, onError, onNotice }) 
 
 function PharmacyCard({ pharmacy }) {
   return <article className="medicine-card saved-pharmacy"><span className="medicine-icon">⌂</span><h3>{pharmacy.name}</h3><p>{pharmacy.location}</p><span className="rating">★ {pharmacy.rating || "New"}</span></article>;
+}
+
+function NearbyPharmacies({ pharmacies, location, coordinates }) {
+  const uniquePharmacies = [...new Map(pharmacies.map((pharmacy) => [pharmacy.id || pharmacy.pharmacyId, pharmacy])).values()];
+
+  return <section className="nearby-shops" aria-labelledby="nearby-shops-title">
+    <div className="nearby-shops-heading">
+      <div><span className="eyebrow">PHARMACIES NEAR YOU</span><h3 id="nearby-shops-title">Nearby medical shops</h3><p>{location ? `Showing approved shops near ${location}.` : "Closest shops first."}</p></div>
+      <span className="nearby-shop-count">{uniquePharmacies.length} {uniquePharmacies.length === 1 ? "shop" : "shops"}</span>
+    </div>
+    {uniquePharmacies.length ? <div className="nearby-shop-grid">{uniquePharmacies.map((pharmacy) => {
+      const destination = Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
+        ? `${pharmacy.latitude},${pharmacy.longitude}`
+        : pharmacy.address || pharmacy.location;
+      const directions = new URLSearchParams({ api: "1", destination });
+      if (coordinates) directions.set("origin", `${coordinates.latitude},${coordinates.longitude}`);
+
+      return <article className="nearby-shop" key={pharmacy.id || pharmacy.pharmacyId}>
+        <span className="nearby-shop-icon" aria-hidden="true">⌂</span>
+        <div className="nearby-shop-copy"><h4>{pharmacy.name || pharmacy.pharmacy}</h4><p>{pharmacy.location}</p><small>{pharmacy.address || pharmacy.location}</small></div>
+        <div className="nearby-shop-meta"><span className="rating">★ {pharmacy.rating || "New"}</span>{Number.isFinite(pharmacy.distanceKm) && <span>{pharmacy.distanceKm.toFixed(1)} km</span>}</div>
+        <a className="button button-outline button-small nearby-directions" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Directions ↗</a>
+      </article>;
+    })}</div> : <div className="nearby-shop-empty">No approved medical shops were found for this location.</div>}
+  </section>;
 }
 
 function StoreProfileEditor({ pharmacy, user, onRefresh, onError, onNotice }) {

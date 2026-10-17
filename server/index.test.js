@@ -51,6 +51,9 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
   const nearby = await api("/medicines?q=paracetamol&latitude=12.935&longitude=77.624");
   assert.equal(nearby.body.medicines[0].pharmacy, "City Care Medicals");
   assert.ok(nearby.body.medicines[0].distanceKm < 1);
+  const nearbyPharmacies = await api("/pharmacies?latitude=12.935&longitude=77.624");
+  assert.equal(nearbyPharmacies.body.pharmacies[0].name, "City Care Medicals");
+  assert.ok(nearbyPharmacies.body.pharmacies[0].distanceKm < 1);
   assert.equal((await api("/medicines?latitude=91&longitude=77")).status, 400);
 });
 

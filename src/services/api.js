@@ -131,6 +131,30 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
   return { medicines: results, total: results.length };
 }
 
+export async function getNearbyPharmacies(location = "", coordinates = null) {
+  if (!supabase) {
+    const params = new URLSearchParams();
+    if (coordinates) {
+      params.set("latitude", coordinates.latitude);
+      params.set("longitude", coordinates.longitude);
+    } else if (location.trim()) {
+      params.set("location", location.trim());
+    }
+    const { pharmacies } = await localRequest(`/pharmacies?${params}`);
+    return pharmacies;
+  }
+
+  const cleanLocation = location.trim().toLowerCase();
+  const { data, error } = await supabase
+    .from("pharmacies")
+    .select("id, name, location, address, phone, status, rating")
+    .eq("status", "approved");
+  if (error) throw new Error(error.message);
+  return (data || [])
+    .filter((pharmacy) => !cleanLocation || pharmacy.location.toLowerCase().includes(cleanLocation))
+    .map((pharmacy) => ({ ...pharmacySummary(pharmacy), distanceKm: null }));
+}
+
 export async function getMedicineDetails(medicineId) {
   if (!supabase) return localRequest(`/medicines/${encodeURIComponent(medicineId)}`);
 
