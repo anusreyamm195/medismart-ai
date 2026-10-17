@@ -1,15 +1,17 @@
 import { createServer as httpCreateServer } from "node:http";
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
-import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectMongoRepositories } from "./db/mongo.js";
 import { demoPharmacyIds, isRegisteredPharmacy, removeDemoPharmacies } from "./demo-pharmacies.js";
 import { createGroqMedicalChat } from "./groq-medical-chat.js";
 import { handleAuthRoute } from "./routes/auth.routes.js";
 import { handleMedicineRoute } from "./routes/medicine.routes.js";
+import { readFile, stat } from "node:fs/promises";
+import { extname, join, resolve, sep } from "node:path";
 
+const frontendDist = resolve(fileURLToPath(new URL("../dist/", import.meta.url)));
 const port = Number(process.env.PORT || 3002);
-const host = process.env.HOST || "127.0.0.1";
+const host = process.env.HOST || "0.0.0.0";
 const tokenSecret = process.env.TOKEN_SECRET || "medlytic-local-development-secret-change-before-deploy";
 if (process.env.NODE_ENV === "production" && !process.env.TOKEN_SECRET) {
   throw new Error("Set TOKEN_SECRET before starting the API in production.");
@@ -463,7 +465,14 @@ function createAppServer({
     }
   }
 
-  return httpCreateServer((req, res) => { handler(req, res); });
+  return httpCreateServer((req, res) => {
+    const pathname = new URL(req.url || "/", "http://localhost").pathname;
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
+      void handler(req, res);
+      return;
+    }
+    void serveFrontend(req, res);
+  });
 }
 
 function pharmacySummary(pharmacy) {
@@ -562,3 +571,61 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 }
 
 export { createAppServer };
+
+async function serveFrontend(req, res) {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.writeHead(405);
+    return res.end("Method not allowed");
+  }
+
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(req.url || "/", "http://localhost").pathname);
+  } catch {
+    res.writeHead(400);
+    return res.end("Bad request");
+  }
+
+  const filePath = resolve(frontendDist, `.${pathname}`);
+  if (filePath !== frontendDist && !filePath.startsWith(frontendDist + sep)) {
+    res.writeHead(403);
+    return res.end("Forbidden");
+  }
+
+  let target = filePath;
+  try {
+    if ((await stat(target)).isDirectory()) target = join(target, "index.html");
+    await stat(target);
+  } catch {
+    // Use the Vite entry point for client-side routes, but not missing assets.
+    if (extname(pathname)) {
+      res.writeHead(404);
+      return res.end("Not found");
+    }
+    target = join(frontendDist, "index.html");
+  }
+
+  try {
+    const content = await readFile(target);
+    const types = {
+      ".css": "text/css; charset=utf-8",
+      ".html": "text/html; charset=utf-8",
+      ".ico": "image/x-icon",
+      ".js": "text/javascript; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".png": "image/png",
+      ".svg": "image/svg+xml",
+      ".woff2": "font/woff2",
+    };
+
+    res.writeHead(200, {
+      "Content-Type": types[extname(target)] || "application/octet-stream",
+      "Cache-Control": pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(req.method === "HEAD" ? undefined : content);
+  } catch {
+    res.writeHead(500);
+    res.end("Unable to serve frontend");
+  }
+}
