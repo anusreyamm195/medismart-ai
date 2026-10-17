@@ -167,6 +167,9 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
   const nearby = await api("/medicines?q=paracetamol&latitude=12.935&longitude=77.624");
   assert.equal(nearby.body.medicines[0].pharmacy, "City Care Medicals");
   assert.ok(nearby.body.medicines[0].distanceKm < 1);
+  const nearbyPharmacies = await api("/pharmacies?latitude=12.935&longitude=77.624");
+  assert.equal(nearbyPharmacies.body.pharmacies[0].name, "City Care Medicals");
+  assert.ok(nearbyPharmacies.body.pharmacies[0].distanceKm < 1);
   const cityResults = await api("/medicines?location=Bengaluru&latitude=12.935&longitude=77.624&radiusKm=50&sort=distance-desc");
   assert.ok(cityResults.body.medicines.length > 0);
   assert.ok(cityResults.body.medicines.every((medicine) => medicine.location.includes("Bengaluru")));
@@ -179,6 +182,15 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
   assert.ok(withinOneKm.body.medicines.every((medicine) => medicine.pharmacy === "City Care Medicals" && medicine.stock > 0));
   assert.equal((await api("/medicines?latitude=12.9352&longitude=77.6245&radiusKm=0")).status, 400);
   assert.equal((await api("/medicines?latitude=91&longitude=77")).status, 400);
+});
+
+test("medicine search accepts multiple comma-separated medicine names", async () => {
+  const result = await api("/medicines?q=Dolo%20650%2CCalpol%20650");
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    [...new Set(result.body.medicines.map((medicine) => medicine.name))].sort(),
+    ["Calpol 650", "Dolo 650"],
+  );
 });
 
 test("patients can reserve an available listing and see search history", async () => {

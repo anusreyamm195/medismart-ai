@@ -159,8 +159,29 @@ function createAppServer({
 
       if (method === "GET" && pathname === "/api/health") return send(200, { status: "ok" });
       if (method === "GET" && pathname === "/api/pharmacies") {
-        const location = (url.searchParams.get("location") || "").toLowerCase();
-        return send(200, { pharmacies: data.pharmacies.filter((item) => item.status === "approved" && (!location || item.location.toLowerCase().includes(location))).map(pharmacySummary) });
+        const location = (url.searchParams.get("location") || "").trim().toLowerCase();
+        const hasLatitude = url.searchParams.has("latitude");
+        const hasLongitude = url.searchParams.has("longitude");
+        if (hasLatitude !== hasLongitude) fail(400, "Both latitude and longitude are required for nearby search.");
+        const searchLatitude = hasLatitude ? coordinate(url.searchParams.get("latitude"), "Latitude", -90, 90) : null;
+        const searchLongitude = hasLongitude ? coordinate(url.searchParams.get("longitude"), "Longitude", -180, 180) : null;
+        const pharmacies = data.pharmacies
+          .filter((item) => item.status === "approved" && (hasLatitude || !location || item.location.toLowerCase().includes(location)))
+          .map((pharmacy) => ({
+            ...pharmacySummary(pharmacy),
+            distanceKm: hasLatitude && Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
+              ? calculateDistanceKm(searchLatitude, searchLongitude, pharmacy.latitude, pharmacy.longitude)
+              : null,
+          }))
+          .sort((a, b) => {
+            if (hasLatitude && a.distanceKm !== b.distanceKm) {
+              if (a.distanceKm === null) return 1;
+              if (b.distanceKm === null) return -1;
+              return a.distanceKm - b.distanceKm;
+            }
+            return b.rating - a.rating;
+          });
+        return send(200, { pharmacies });
       }
       if (method === "GET" && pathname === "/api/search-history") {
         const current = requireRole("patient");

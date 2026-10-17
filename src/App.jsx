@@ -4,7 +4,6 @@ import "./medlytic.css";
 import StoreLocationPicker from "./components/StoreLocationPicker";
 import {
   searchMedicines,
-  getApprovedPharmacies,
   getMedicineDetails,
   signUpUser,
   loginUser,
@@ -77,15 +76,20 @@ async function geocodeLocation(location) {
   return { latitude, longitude };
 }
 
+function groupMedicinesByPharmacy(medicines) {
+  const pharmacies = new Map();
+  for (const medicine of medicines) {
+    const listings = pharmacies.get(medicine.pharmacyId) || [];
+    listings.push(medicine);
+    pharmacies.set(medicine.pharmacyId, listings);
+  }
+  return [...pharmacies.entries()].map(([pharmacyId, listings]) => ({ pharmacyId, listings }));
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("home");
   const [medicines, setMedicines] = useState([]);
-  const [pharmacyOptions, setPharmacyOptions] = useState([]);
-  const [pharmacyOptionsLoaded, setPharmacyOptionsLoaded] = useState(false);
-  const [pharmacyQuery, setPharmacyQuery] = useState("");
-  const [selectedPharmacyId, setSelectedPharmacyId] = useState("");
-  const [pharmacyMenuOpen, setPharmacyMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
   const [userCoordinates, setUserCoordinates] = useState(null);
@@ -121,68 +125,6 @@ function App() {
   const [adminData, setAdminData] = useState(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [reportTarget, setReportTarget] = useState(null);
-  const reservationUserId = user?.role === "patient" ? user.id : null;
-  const reservationsLoading = Boolean(reservationUserId && reservationsLoadedFor !== reservationUserId);
-
-  const completeReservation = useCallback(async (listing, userId) => {
-    setReservingListingId(listing.id);
-    try {
-      const result = await apiReserveMedicine(userId, listing.id, 1);
-      const optimisticReservation = {
-        id: result.reservation?.id || `reservation-${listing.id}-${Date.now()}`,
-        listingId: listing.id,
-        medicine: listing.name,
-        genericName: listing.genericName,
-        pharmacy: listing.pharmacy,
-        pharmacyId: listing.pharmacyId,
-        location: listing.location,
-        quantity: 1,
-        status: result.reservation?.status || "pending",
-        createdAt: new Date().toISOString(),
-      };
-      setReservations((current) => [optimisticReservation, ...current.filter((item) => item.id !== optimisticReservation.id)]);
-      setReservationCartOpen(true);
-      setNotice(result.message || "Medicine reserved.");
-      try {
-        setReservations(await getUserReservations(userId));
-        setReservationsLoadedFor(userId);
-      } catch (err) {
-        setReservationsLoadedFor(userId);
-        setError(`Reservation placed, but the cart could not be refreshed: ${err.message}`);
-      }
-    } catch (err) {
-      setError(err.message || "Failed to reserve medicine.");
-    } finally {
-      setReservingListingId(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!reservationUserId) return undefined;
-    let active = true;
-    getUserReservations(reservationUserId)
-      .then((items) => {
-        if (!active) return;
-        setReservations(items);
-        setReservationsLoadedFor(reservationUserId);
-      })
-      .catch((err) => {
-        if (!active) return;
-        setError(err.message || "Failed to load your reservations.");
-        setReservationsLoadedFor(reservationUserId);
-      });
-    return () => { active = false; };
-  }, [reservationUserId]);
-
-  const reservePendingAfterAuth = async (authenticatedUser) => {
-    if (!pendingReservation) return;
-    setPendingReservation(null);
-    if (authenticatedUser.role !== "patient") {
-      setError("Reservations are available with a patient account. Sign in as a patient to reserve this medicine.");
-      return;
-    }
-    await completeReservation(pendingReservation, authenticatedUser.id);
-  };
 
   const selectRegistrationLocation = async (coordinates) => {
     setRegistrationCoordinates(coordinates);
@@ -216,11 +158,13 @@ function App() {
           latitude: coordinates?.latitude,
           longitude: coordinates?.longitude,
           radiusKm: searchRadiusKm,
-          pharmacyId: pharmacyFilterId,
         },
         user
       );
       setMedicines(data.medicines);
+      setNearbyPharmacies(pharmacyData);
+      setNearbySearchLocation(locationQuery);
+      setNearbySearchActive(Boolean(coordinates || locationQuery.trim()));
       setView("home");
     } catch (err) {
       setError(err.message || "Failed to search medicines.");
@@ -297,8 +241,8 @@ function App() {
         setUserCoordinates(coordinates);
         setSearchMapCenter(coordinates);
         setRadiusKm(50);
-        setSort("distance-desc");
-        await search(query, locationQuery, coordinates, 50, "distance-desc");
+        setSort("distance-asc");
+        await search(query, locationQuery, coordinates, 50, "distance-asc");
       } catch (err) {
         setError(err.message || "Could not find medicines for that location.");
         setLoading(false);
@@ -349,7 +293,7 @@ function App() {
     setUserCoordinates(coordinates);
     setSearchMapCenter(coordinates);
     setRadiusKm(50);
-    setSort("distance-desc");
+    setSort("distance-asc");
     const request = ++searchLocationRequest.current;
     const area = await reverseGeocode(coordinates);
     if (request === searchLocationRequest.current) setLocation(area);
@@ -384,10 +328,10 @@ function App() {
       setUserCoordinates(coordinates);
       setSearchMapCenter(coordinates);
       setRadiusKm(50);
-      setSort("distance-desc");
+      setSort("distance-asc");
       const nearbyLocation = await reverseGeocode(coordinates);
       setLocation(nearbyLocation);
-      await search(query, nearbyLocation, coordinates, 50, "distance-desc");
+      await search(query, nearbyLocation, coordinates, 50, "distance-asc");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -571,18 +515,21 @@ function App() {
           <section className="hero">
             <div className="hero-copy">
               <span className="eyebrow"><span className="pulse-dot" /> YOUR LOCAL MEDICINE GUIDE</span>
-              <h1>Find the right medicine.<br /><em>At the right price.</em></h1>
+              <h1>Find the right<br /><em>medicine.</em><br />At the right price.</h1>
               <p>Compare real-time availability and prices from pharmacies near you. Better access starts with better information.</p>
-              <div className="trust-line"><span>✓ Verified pharmacy listings</span><span>✓ Price transparency</span><span>✓ Always free to search</span></div>
+              <div className="trust-line"><span><i>✓</i> Verified pharmacy listings</span><span><i>%</i> Price transparency</span><span><i>⌖</i> Always free to search</span></div>
             </div>
             <div className="hero-art" aria-hidden="true">
               <div className="art-ring ring-one" /><div className="art-ring ring-two" />
-              <div className="pill-bottle"><div className="bottle-cap" /><div className="bottle-label"><span>Rx</span><b>CARE<br />THAT'S<br />CLOSER</b></div></div>
-              <div className="floating-pill pill-a" /><div className="floating-pill pill-b" />
-              <div className="art-note"><span>✦</span> Your health, made simpler</div>
+              <div className="leaf leaf-one" /><div className="leaf leaf-two" /><div className="leaf leaf-three" />
+              <div className="hero-pedestal" />
+              <div className="pill-bottle"><div className="bottle-cap" /><div className="bottle-label"><span>✚ HEALTH FIRST</span><b>Better<br />Health<br />Everyday</b><small>SAFE · RELIABLE · ACCESSIBLE</small></div></div>
+              <div className="blister-pack"><i /><i /><i /><i /><i /><i /></div>
+              <div className="floating-pill pill-a" /><div className="floating-pill pill-b" /><div className="floating-pill pill-c" />
+              <div className="art-note"><span>♡</span> Small steps to<br />better health</div>
             </div>
             <form className="search-form" onSubmit={handleSearch}>
-              <label className="search-field"><span>⌕</span><input aria-label="Medicine name" placeholder="Medicine, brand or generic name" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+              <label className="search-field"><span>⌕</span><input aria-label="Medicine names" placeholder="Medicines (separate multiple with commas)" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
               <label className="search-field location-field"><span>⌖</span><input aria-label="Location" placeholder="City or area" value={location} onChange={(event) => { setLocation(event.target.value); setUserCoordinates(null); setSearchMapCenter(null); setSearchMapOpen(false); setSort("price-asc"); }} /></label>
               <button className="button button-outline button-small locate-button" type="button" onClick={locateMe} disabled={locating}>{locating ? "Locating…" : "Locate me"}</button>
               <button className="button button-outline button-small map-select-button" type="button" onClick={toggleSearchMap} aria-expanded={searchMapOpen} aria-controls="search-location-map">{searchMapOpen ? "Close map" : "Select on map"}</button>
@@ -604,7 +551,7 @@ function App() {
               />
             </div>}
             <div className="section-heading">
-              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>{userCoordinates ? `In-stock medicines within ${radiusKm} km${sort === "distance-desc" ? ", farthest first." : sort === "distance-asc" ? ", closest first." : "."}` : "Prices and stock reported by listed pharmacies."}</p></div>
+              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular medicines"}</h2><p>{userCoordinates ? `In-stock medicines within ${radiusKm} km by road${sort === "distance-desc" ? ", farthest first." : sort === "distance-asc" ? ", closest first." : "."}` : "Prices and stock reported by listed pharmacies."}</p></div>
               <div className="result-controls">
                 <div className="pharmacy-filter">
                   <label className="sort-control" htmlFor="pharmacy-filter-search">Pharmacy</label>
@@ -659,10 +606,9 @@ function App() {
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-            {!pharmacyOptionsLoaded ? <div className="empty-state"><span>⌕</span><h3>Loading registered pharmacies</h3><p>Checking approved pharmacy listings near you.</p></div>
-              : registeredMedicines.length ? <div className="medicine-grid">{registeredMedicines.map((medicine) =>
-              <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} reserving={reservingListingId === medicine.id} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
-              : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or location. Only approved registered pharmacy listings are shown.</p></div>}
+            {medicines.length ? <div className="medicine-grid">{medicines.map((medicine) =>
+              <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
+              : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
           </section>
           <section className="how-section">
             <div><span className="eyebrow">SIMPLE BY DESIGN</span><h2>Good care starts with a good search.</h2></div>
@@ -676,6 +622,8 @@ function App() {
         {view === "owner" && <OwnerDashboard data={ownerData} user={user} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
         {view === "admin" && <AdminDashboard data={adminData} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
       </main>
+
+      {view === "home" && !authOpen && !detail && !reportTarget && <FloatingMedicineChatbot medicines={medicines} currentQuery={query} />}
 
       <footer className="site-footer"><a className="brand footer-brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}><span className="brand-mark">✚</span><span>medlytic<span className="brand-dot">.</span></span></a><span>Medicine information is for general awareness only. Always follow your clinician’s advice.</span><span>© 2026 Medlytic</span></footer>
 
@@ -706,6 +654,8 @@ function App() {
 
       {authOpen && (
         <Modal
+          className="auth-modal"
+          showHeading={false}
           title={authMode === "login" ? "Welcome back" : "Create your account"}
           onClose={() => {
             if (!authLoading) {
@@ -714,101 +664,129 @@ function App() {
             }
           }}
         >
-          <p className="modal-intro">
-            {authMode === "login"
-              ? "Sign in to manage your searches and saved pharmacies."
-              : "Join Medlytic to find care closer to home."}
-          </p>
-          <form className="stack-form" onSubmit={handleAuth}>
-            {authMode === "register" && (
-              <>
-                <label>
-                  I am a
-                  <select
-                    value={authRole}
-                    onChange={(event) => { setAuthRole(event.target.value); setRegistrationCoordinates(null); setRegistrationLocation(""); }}
-                    disabled={authLoading}
-                  >
-                    <option value="patient">Patient</option>
-                    <option value="owner">Medical store owner</option>
-                  </select>
-                </label>
-                <label>
-                  Your name
-                  <input name="name" required autoComplete="name" disabled={authLoading} />
-                </label>
-                {authRole === "owner" && (
+          <div className="auth-layout">
+            <section className="auth-story">
+              <a className="auth-brand" href="/" onClick={(event) => { event.preventDefault(); setAuthOpen(false); setView("home"); }}>
+                <span className="brand-mark">✚</span>
+                <span>medlytic<small>Smart medicine. Better health.</small></span>
+              </a>
+              <div className="auth-story-copy">
+                <span className="eyebrow">CARE, WITHIN REACH</span>
+                <h2>Healthcare<br />made <em>simpler.</em></h2>
+                <p>Find the right medicine, compare prices, and get the care you need — all in one place.</p>
+                <div className="auth-benefits">
+                  <span><i>⌖</i> Nearby pharmacies</span>
+                  <span><i>✓</i> Verified listings</span>
+                  <span><i>₹</i> Clear prices</span>
+                </div>
+              </div>
+              <div className="auth-illustration" aria-hidden="true">
+                <div className="auth-leaf auth-leaf-one" /><div className="auth-leaf auth-leaf-two" /><div className="auth-leaf auth-leaf-three" />
+                <div className="auth-bottle"><span>✚</span></div>
+                <div className="auth-pill auth-pill-one" /><div className="auth-pill auth-pill-two" />
+                <span className="auth-script">Because your<br />health comes first</span>
+              </div>
+            </section>
+            <section className="auth-form-panel">
+              <header className="auth-form-heading">
+                <span className="eyebrow">MEDLYTIC</span>
+                <h2>{authMode === "login" ? "Welcome back" : "Create your account"}</h2>
+                <p>{authMode === "login" ? "Sign in to continue your care journey." : "Join Medlytic to find care closer to home."}</p>
+              </header>
+              <form className="stack-form auth-form" onSubmit={handleAuth}>
+                {authMode === "register" && (
                   <>
                     <label>
-                      Store location
-                      <input
-                        name="location"
-                        required
-                        placeholder="Select a point on the map"
-                        value={registrationLocation}
-                        onChange={(event) => setRegistrationLocation(event.target.value)}
+                      I am a
+                      <select
+                        value={authRole}
+                        onChange={(event) => { setAuthRole(event.target.value); setRegistrationCoordinates(null); setRegistrationLocation(""); }}
                         disabled={authLoading}
-                      />
+                      >
+                        <option value="patient">Patient</option>
+                        <option value="owner">Medical store owner</option>
+                      </select>
                     </label>
-                    <StoreLocationPicker
-                      position={registrationCoordinates}
-                      onSelect={selectRegistrationLocation}
-                      onUseCurrentLocation={locateRegistrationStore}
-                      locating={registrationLocating}
-                      disabled={authLoading}
-                    />
                     <label>
-                      Pharmacy name
-                      <input name="pharmacyName" required disabled={authLoading} />
+                      Your name
+                      <input name="name" required autoComplete="name" placeholder="Enter your name" disabled={authLoading} />
                     </label>
+                    {authRole === "owner" && (
+                      <>
+                        <label>
+                          Store location
+                          <input
+                            name="location"
+                            required
+                            placeholder="Select a point on the map"
+                            value={registrationLocation}
+                            onChange={(event) => setRegistrationLocation(event.target.value)}
+                            disabled={authLoading}
+                          />
+                        </label>
+                        <StoreLocationPicker
+                          position={registrationCoordinates}
+                          onSelect={selectRegistrationLocation}
+                          onUseCurrentLocation={locateRegistrationStore}
+                          locating={registrationLocating}
+                          disabled={authLoading}
+                        />
+                        <label>
+                          Pharmacy name
+                          <input name="pharmacyName" required disabled={authLoading} />
+                        </label>
+                      </>
+                    )}
                   </>
                 )}
-              </>
-            )}
-            <label>
-              Email address
-              <input name="email" type="email" required autoComplete="email" disabled={authLoading} />
-            </label>
-            <label>
-              Password
-              <input
-                name="password"
-                type="password"
-                required
-                minLength="8"
-                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                <label>
+                  Email address
+                  <input name="email" type="email" required autoComplete="email" placeholder="Enter your email" disabled={authLoading} />
+                </label>
+                <label>
+                  Password
+                  <input
+                    name="password"
+                    type="password"
+                    required
+                    minLength="8"
+                    autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                    placeholder={authMode === "login" ? "Enter your password" : "Create a password"}
+                    disabled={authLoading}
+                  />
+                </label>
+                {authError && <div className="alert alert-error" role="alert">{authError}</div>}
+                <button
+                  className="button button-primary button-full"
+                  type="submit"
+                  disabled={authLoading}
+                >
+                  {authLoading
+                    ? (authMode === "login" ? "Signing in…" : "Creating account…")
+                    : (authMode === "login" ? "Log in" : "Create account")} <span aria-hidden="true">→</span>
+                </button>
+              </form>
+              <button
+                className="text-button modal-toggle"
                 disabled={authLoading}
-              />
-            </label>
-            {authError && <div className="alert alert-error" role="alert">{authError}</div>}
-            <button
-              className="button button-primary button-full"
-              type="submit"
-              disabled={authLoading}
-            >
-              {authLoading
-                ? (authMode === "login" ? "Signing in…" : "Creating account…")
-                : (authMode === "login" ? "Log in" : "Create account")}
-            </button>
-          </form>
-          <button
-            className="text-button modal-toggle"
-            disabled={authLoading}
-            onClick={() => {
-              setAuthMode(authMode === "login" ? "register" : "login");
-              setAuthError("");
-            }}
-          >
-            {authMode === "login"
-              ? "New to Medlytic? Create an account"
-              : "Already have an account? Log in"}
-          </button>
+                onClick={() => {
+                  setAuthMode(authMode === "login" ? "register" : "login");
+                  setAuthError("");
+                }}
+              >
+                {authMode === "login"
+                  ? <>New to Medlytic? <b>Create an account</b></>
+                  : <>Already have an account? <b>Log in</b></>}
+              </button>
+            </section>
+          </div>
         </Modal>
       )}
 
       {detail && <Modal title={detail.medicine.name} onClose={() => setDetail(null)}>
         <div className="detail-generic">{detail.medicine.genericName} · {detail.medicine.category}</div>
         <div className="detail-info"><h3>About this medicine</h3><p>{detail.medicine.info || "Ask a pharmacist or clinician for medicine-specific guidance."}</p><div className="medical-disclaimer">General information only — not a diagnosis or treatment recommendation. Do not start, stop, or change medication without advice from a qualified health professional.</div></div>
+        <MedicineChatbot medicine={detail.medicine} alternatives={detail.alternatives} />
         <div className="alternatives"><h3>Similar options to discuss with a pharmacist</h3><p>{detail.alternatives.length ? detail.alternatives.join(", ") : "No alternatives are listed in the local catalogue."}</p><small>Similar active ingredient does not mean medicines are interchangeable. Confirm suitability with a clinician or pharmacist.</small></div>
         <h3 className="availability-heading">Available listings</h3>{detail.listings.map((listing) => <div className="listing-line" key={listing.id}><span><b>{listing.pharmacy}</b><small>{listing.location} · ★ {listing.rating}</small></span><strong>₹{listing.price.toFixed(2)}</strong></div>)}
         {user?.role === "patient" && <button className="text-button report-link" onClick={() => { setReportTarget({ name: detail.medicine.name }); setDetail(null); }}>Report incorrect information</button>}
@@ -819,11 +797,11 @@ function App() {
   );
 }
 
-function MedicineCard({ medicine, userCoordinates, reserving, onDetails, onReserve, onSave, onRate }) {
+function MedicineCard({ medicine, userCoordinates, onDetails, onReserve, onSave, onRate }) {
   const [rating, setRating] = useState("5");
-  const destination = Number.isFinite(medicine.latitude) && Number.isFinite(medicine.longitude)
-    ? `${medicine.latitude},${medicine.longitude}`
-    : medicine.address || medicine.location;
+  const destination = Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
+    ? `${pharmacy.latitude},${pharmacy.longitude}`
+    : pharmacy.address || pharmacy.location;
   const directions = new URLSearchParams({ api: "1", destination });
   if (userCoordinates) directions.set("origin", `${userCoordinates.latitude},${userCoordinates.longitude}`);
   return <article className="medicine-card">
@@ -832,49 +810,9 @@ function MedicineCard({ medicine, userCoordinates, reserving, onDetails, onReser
     <div className="pharmacy-summary"><span className="pharmacy-icon">⌂</span><span><b>{medicine.pharmacy}</b><small>⌖ {medicine.location}{Number.isFinite(medicine.distanceKm) ? ` · ${medicine.distanceKm.toFixed(1)} km away` : ""}</small></span><span className="rating">★ {medicine.rating}</span></div>
     <a className="map-link" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Get directions ↗</a>
     <div className="card-divider" /><div className="price-row"><span>Price per pack</span><strong>₹{medicine.price.toFixed(2)}</strong></div>
-    <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock || reserving} onClick={onReserve}>{reserving ? "Reserving…" : "Reserve"}</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
+    <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock} onClick={onReserve}>Reserve</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
     <div className="rate-control"><select aria-label={`Rating for ${medicine.pharmacy}`} value={rating} onChange={(event) => setRating(event.target.value)}><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select><button className="text-button rate-link" onClick={() => onRate(Number(rating))}>Rate pharmacy</button></div>
   </article>;
-}
-
-function OwnerOverview({ data, onOpenStore }) {
-  const listings = data?.listings || [];
-  const reservations = data?.reservations || [];
-  const counts = listings.reduce((result, listing) => {
-    const stock = Number(listing.stock);
-    result.total += 1;
-    if (stock === 0) result.out += 1;
-    else if (stock <= 5) result.low += 1;
-    else result.available += 1;
-    return result;
-  }, { total: 0, available: 0, low: 0, out: 0 });
-  const reservationCounts = reservations.reduce((result, reservation) => {
-    const status = String(reservation.status || "").toLowerCase().replace(/[\s-]+/g, "_");
-    if (status === "pending") result.pending += 1;
-    if (status === "ready" || status === "ready_for_pickup") result.ready += 1;
-    return result;
-  }, { pending: 0, ready: 0 });
-
-  return <section className="content-section dashboard-section">
-    <SectionTitle
-      eyebrow="PHARMACY PORTAL"
-      title="Owner dashboard"
-      sub={data?.pharmacy?.name ? `A live overview of ${data.pharmacy.name}.` : "A live overview of your pharmacy inventory and customer reservations."}
-    />
-    <div className="metric-grid owner-overview-grid">
-      <Metric label="Total medicine listings" value={counts.total} />
-      <Metric label="Available medicines" value={counts.available} />
-      <Metric label="Low-stock medicines" value={counts.low} />
-      <Metric label="Out-of-stock medicines" value={counts.out} />
-      <Metric label="Pending reservations" value={reservationCounts.pending} />
-      <Metric label="Reservations ready for pickup" value={reservationCounts.ready} />
-    </div>
-    <div className="panel owner-overview-note">
-      <h3>Manage your pharmacy</h3>
-      <p className="muted-copy">Open Store dashboard to add medicines, update stock, and review customer requests.</p>
-      <button className="button button-primary button-small" type="button" onClick={onOpenStore}>Open Store dashboard</button>
-    </div>
-  </section>;
 }
 
 function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
@@ -1045,6 +983,31 @@ function PharmacyCard({ pharmacy }) {
   return <article className="medicine-card saved-pharmacy"><span className="medicine-icon">⌂</span><h3>{pharmacy.name}</h3><p>{pharmacy.location}</p><span className="rating">★ {pharmacy.rating || "New"}</span></article>;
 }
 
+function NearbyPharmacies({ pharmacies, location, coordinates }) {
+  const uniquePharmacies = [...new Map(pharmacies.map((pharmacy) => [pharmacy.id || pharmacy.pharmacyId, pharmacy])).values()];
+
+  return <section className="nearby-shops" aria-labelledby="nearby-shops-title">
+    <div className="nearby-shops-heading">
+      <div><span className="eyebrow">PHARMACIES NEAR YOU</span><h3 id="nearby-shops-title">Nearby medical shops</h3><p>{location ? `Showing approved shops near ${location}.` : "Closest shops first."}</p></div>
+      <span className="nearby-shop-count">{uniquePharmacies.length} {uniquePharmacies.length === 1 ? "shop" : "shops"}</span>
+    </div>
+    {uniquePharmacies.length ? <div className="nearby-shop-grid">{uniquePharmacies.map((pharmacy) => {
+      const destination = Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
+        ? `${pharmacy.latitude},${pharmacy.longitude}`
+        : pharmacy.address || pharmacy.location;
+      const directions = new URLSearchParams({ api: "1", destination });
+      if (coordinates) directions.set("origin", `${coordinates.latitude},${coordinates.longitude}`);
+
+      return <article className="nearby-shop" key={pharmacy.id || pharmacy.pharmacyId}>
+        <span className="nearby-shop-icon" aria-hidden="true">⌂</span>
+        <div className="nearby-shop-copy"><h4>{pharmacy.name || pharmacy.pharmacy}</h4><p>{pharmacy.location}</p><small>{pharmacy.address || pharmacy.location}</small></div>
+        <div className="nearby-shop-meta"><span className="rating">★ {pharmacy.rating || "New"}</span>{Number.isFinite(pharmacy.distanceKm) && <span>{pharmacy.distanceKm.toFixed(1)} km</span>}</div>
+        <a className="button button-outline button-small nearby-directions" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Directions ↗</a>
+      </article>;
+    })}</div> : <div className="nearby-shop-empty">No approved medical shops were found for this location.</div>}
+  </section>;
+}
+
 function StoreProfileEditor({ pharmacy, user, onRefresh, onError, onNotice }) {
   const [profile, setProfile] = useState({ name: pharmacy.name, location: pharmacy.location, address: pharmacy.address || "", phone: pharmacy.phone || "", latitude: pharmacy.latitude ?? null, longitude: pharmacy.longitude ?? null });
   const [saving, setSaving] = useState(false);
@@ -1105,8 +1068,9 @@ function EmptyDashboard({ text }) {
   return <div className="empty-state compact"><span>✦</span><p>{text}</p></div>;
 }
 
-function Modal({ title, onClose, children }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal" role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Close">×</button><span className="eyebrow">MEDLYTIC</span><h2>{title}</h2>{children}</section></div>;
+function Modal({ title, onClose, children, className = "", showHeading = true }) {
+  const modifier = className ? ` ${className}` : "";
+  return <div className={`modal-backdrop${modifier}-backdrop`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className={`modal${modifier}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Close">×</button>{showHeading && <><span className="eyebrow">MEDLYTIC</span><h2>{title}</h2></>}{children}</section></div>;
 }
 
 export default App;
