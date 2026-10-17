@@ -32,7 +32,7 @@ These accounts are stored in MongoDB for development. Do not use demo credential
 - **Store owners:** register a pharmacy (new stores require admin approval), edit the pharmacy profile, add/edit medicine listings, update stock and prices, and see inventory statistics and reservations.
 - **Admins:** view platform counts, approve/reject pharmacy registrations, suspend/reactivate accounts, review/resolve reports, and inspect the audit log.
 
-Medicine facts and same-ingredient brand suggestions are stored in MongoDB; there is no external generative-AI service configured. The information is general awareness only, not medical advice or a recommendation to switch medicines. Patients should confirm any medicine or alternative with a qualified clinician or pharmacist.
+Medicine facts and same-ingredient brand suggestions are stored in MongoDB; there is no external generative-AI service configured. When a user names a medicine, the assistant checks the current approved pharmacy listings and catalogue for its information, location, price, stock, and contact details. Listings reflect pharmacy-reported data and should be confirmed with the pharmacy. The medicine assistant does not diagnose symptoms or prescribe treatment. It can provide limited general information about common non-prescription symptom-relief options for explicitly named conditions; this is not a personalized recommendation, and users should confirm suitability with a pharmacist or clinician. Symptom questions are given possible causes with a reminder to seek assessment, and potentially urgent symptoms are directed to local emergency services.
 
 ## API overview
 

@@ -193,6 +193,7 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
         pharmacy: pharm.name,
         location: pharm.location,
         address: pharm.address,
+        phone: pharm.phone,
         latitude: pharm.latitude == null ? null : Number(pharm.latitude),
         longitude: pharm.longitude == null ? null : Number(pharm.longitude),
         rating: Number(pharm.rating) || 0,
