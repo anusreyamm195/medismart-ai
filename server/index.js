@@ -1,55 +1,17 @@
 import { createServer as httpCreateServer } from "node:http";
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { connectMongoRepositories } from "./db/mongo.js";
+import { handleAuthRoute } from "./routes/auth.routes.js";
+import { handleMedicineRoute } from "./routes/medicine.routes.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const defaultStorePath = resolve(here, "store.json");
 const port = Number(process.env.PORT || 3002);
 const host = process.env.HOST || "127.0.0.1";
 const tokenSecret = process.env.TOKEN_SECRET || "medlytic-local-development-secret-change-before-deploy";
 if (process.env.NODE_ENV === "production" && !process.env.TOKEN_SECRET) {
   throw new Error("Set TOKEN_SECRET before starting the API in production.");
 }
-
-const initialData = () => ({
-  users: [
-    { id: "user-admin", name: "Platform Admin", email: "admin@medlytic.local", passwordHash: hashPassword("Admin123!"), role: "admin", active: true },
-    { id: "user-patient", name: "Aarav Sharma", email: "patient@medlytic.local", passwordHash: hashPassword("Patient123!"), role: "patient", active: true },
-    { id: "user-owner", name: "Maya Patel", email: "owner@medlytic.local", passwordHash: hashPassword("Owner123!"), role: "owner", active: true },
-  ],
-  pharmacies: [
-    { id: "pharmacy-green-cross", ownerId: "user-owner", name: "Green Cross Pharmacy", location: "Indiranagar, Bengaluru", address: "12 100 Feet Road, Indiranagar, Bengaluru", phone: "+91 80 4000 1001", latitude: 12.9719, longitude: 77.6412, status: "approved", rating: 4.8, createdAt: new Date().toISOString() },
-    { id: "pharmacy-city-care", ownerId: null, name: "City Care Medicals", location: "Koramangala, Bengaluru", address: "80 Feet Road, Koramangala, Bengaluru", phone: "+91 80 4000 1002", latitude: 12.9352, longitude: 77.6245, status: "approved", rating: 4.5, createdAt: new Date().toISOString() },
-    { id: "pharmacy-wellness", ownerId: null, name: "Wellness Drugstore", location: "Whitefield, Bengaluru", address: "Main Road, Whitefield, Bengaluru", phone: "+91 80 4000 1003", latitude: 12.9698, longitude: 77.75, status: "approved", rating: 4.6, createdAt: new Date().toISOString() },
-  ],
-  medicines: [
-    { id: "med-paracetamol", name: "Dolo 650", genericName: "Paracetamol 650 mg", category: "Pain relief", info: "Paracetamol is commonly used for pain and fever. Follow the package directions and avoid taking multiple products that contain paracetamol." },
-    { id: "med-calpol", name: "Calpol 650", genericName: "Paracetamol 650 mg", category: "Pain relief", info: "Paracetamol is commonly used for pain and fever. Follow the package directions and avoid taking multiple products that contain paracetamol." },
-    { id: "med-ibuprofen", name: "Brufen 400", genericName: "Ibuprofen 400 mg", category: "Pain relief", info: "Ibuprofen is a non-steroidal anti-inflammatory medicine. It may not be suitable for everyone; ask a clinician or pharmacist if you have other conditions or take other medicines." },
-    { id: "med-cetirizine", name: "Cetzine 10", genericName: "Cetirizine 10 mg", category: "Allergy relief", info: "Cetirizine is an antihistamine used to relieve allergy symptoms. It can cause drowsiness in some people." },
-    { id: "med-vitamin-c", name: "Limcee 500", genericName: "Vitamin C 500 mg", category: "Vitamins", info: "Vitamin C is a dietary supplement. Follow label directions and ask a health professional whether a supplement is right for you." },
-    { id: "med-omeprazole", name: "Omez 20", genericName: "Omeprazole 20 mg", category: "Digestive health", info: "Omeprazole reduces stomach acid. Seek professional advice about persistent symptoms or long-term use." },
-  ],
-  listings: [
-    { id: "listing-1", medicineId: "med-paracetamol", pharmacyId: "pharmacy-green-cross", price: 30, stock: 42 },
-    { id: "listing-2", medicineId: "med-paracetamol", pharmacyId: "pharmacy-city-care", price: 32, stock: 18 },
-    { id: "listing-3", medicineId: "med-paracetamol", pharmacyId: "pharmacy-wellness", price: 28, stock: 0 },
-    { id: "listing-10", medicineId: "med-calpol", pharmacyId: "pharmacy-green-cross", price: 34, stock: 21 },
-    { id: "listing-4", medicineId: "med-ibuprofen", pharmacyId: "pharmacy-green-cross", price: 45, stock: 16 },
-    { id: "listing-5", medicineId: "med-ibuprofen", pharmacyId: "pharmacy-city-care", price: 42, stock: 25 },
-    { id: "listing-6", medicineId: "med-cetirizine", pharmacyId: "pharmacy-city-care", price: 22, stock: 31 },
-    { id: "listing-7", medicineId: "med-cetirizine", pharmacyId: "pharmacy-wellness", price: 24, stock: 12 },
-    { id: "listing-8", medicineId: "med-vitamin-c", pharmacyId: "pharmacy-green-cross", price: 18, stock: 60 },
-    { id: "listing-9", medicineId: "med-omeprazole", pharmacyId: "pharmacy-wellness", price: 56, stock: 9 },
-  ],
-  history: [],
-  savedPharmacies: [],
-  reservations: [],
-  reports: [],
-  audit: [],
-});
 
 function hashPassword(password, salt = randomBytes(16).toString("hex")) {
   const hash = scryptSync(password, salt, 64).toString("hex");
@@ -94,40 +56,36 @@ function id(prefix) {
   return `${prefix}-${randomBytes(9).toString("hex")}`;
 }
 
-function safeEqualText(first, second) {
-  const a = Buffer.from(first.toLowerCase());
-  const b = Buffer.from(second.toLowerCase());
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function createStore(storePath) {
-  let data;
-  if (existsSync(storePath)) {
-    try {
-      data = JSON.parse(readFileSync(storePath, "utf8"));
-    } catch (error) {
-      throw new Error(`Unable to read Medlytic data at ${storePath}: ${error.message}`, { cause: error });
-    }
-  } else {
-    data = initialData();
-    persist();
+function createAppServer({
+  data: applicationData,
+  userRepository: persistentUsers,
+  medicineRepository,
+  applicationDataRepository,
+} = {}) {
+  if (!applicationData || !persistentUsers || !medicineRepository || !applicationDataRepository) {
+    throw new Error("MongoDB data and repositories are required to create the API server.");
   }
-  for (const key of ["users", "pharmacies", "medicines", "listings", "history", "savedPharmacies", "reservations", "reports", "audit"]) data[key] ||= [];
-  function persist() {
-    mkdirSync(dirname(storePath), { recursive: true });
-    const temporaryPath = `${storePath}.${process.pid}.tmp`;
-    writeFileSync(temporaryPath, JSON.stringify(data, null, 2), "utf8");
-    renameSync(temporaryPath, storePath);
-  }
-  return {
-    get data() { return data; },
-    save() { persist(); },
+  const data = applicationData;
+  for (const key of ["users", "pharmacies", "medicines", "listings", "history", "savedPharmacies", "reservations", "reports", "audit", "ratings"]) data[key] ||= [];
+  const saveApplicationData = () => applicationDataRepository.save(data);
+  const users = {
+    async findById(userId) {
+      return await persistentUsers.findById(userId);
+    },
+    async findByEmail(email) {
+      return await persistentUsers.findByEmail(email);
+    },
+    async updateById(userId, updates) {
+      const updated = await persistentUsers.updateById(userId, updates);
+      if (updated) Object.assign(data.users.find((candidate) => candidate.id === userId) || {}, updated);
+      return updated;
+    },
+    async create(user) {
+      const created = await persistentUsers.create(user);
+      data.users.push(created);
+      return created;
+    },
   };
-}
-
-function createAppServer({ storePath = defaultStorePath } = {}) {
-  const store = createStore(storePath);
-  const data = store.data;
 
   function audit(actor, action, target) {
     data.audit.unshift({ id: id("audit"), actor, action, target, createdAt: new Date().toISOString() });
@@ -154,7 +112,8 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
       const body = ["POST", "PATCH", "PUT"].includes(method) ? await readBody(req) : {};
       const token = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : "";
       const userId = verifyToken(token);
-      const user = userId ? data.users.find((candidate) => candidate.id === userId && candidate.active) : null;
+      const foundUser = userId ? await users.findById(userId) : null;
+      const user = foundUser?.active ? foundUser : null;
       const requireUser = () => user || fail(401, "Please sign in to continue.");
       const requireRole = (...roles) => {
         const current = requireUser();
@@ -167,58 +126,38 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         if (!Number.isFinite(number) || number < minimum || number > maximum) fail(400, `${label} must be between ${minimum} and ${maximum}.`);
         return number;
       };
+      const routeContext = {
+        method,
+        pathname,
+        url,
+        body,
+        users,
+        data,
+        saveApplicationData,
+        medicineRepository,
+        user,
+        requireUser,
+        requireRole,
+        hashPassword,
+        signToken,
+        verifyPassword,
+        id,
+        text,
+        validEmail,
+        validPassword,
+        coordinate,
+        positiveNumber,
+        audit,
+        pharmacySummary,
+        calculateDistanceKm,
+        publicUser,
+        send,
+        fail,
+      };
+      if (await handleAuthRoute(routeContext)) return;
+      if (await handleMedicineRoute(routeContext)) return;
 
       if (method === "GET" && pathname === "/api/health") return send(200, { status: "ok" });
-      if (method === "GET" && pathname === "/api/medicines") {
-        const q = (url.searchParams.get("q") || "").trim().toLowerCase();
-        const location = (url.searchParams.get("location") || "").trim().toLowerCase();
-        const maxPrice = url.searchParams.has("maxPrice") ? Number(url.searchParams.get("maxPrice")) : Infinity;
-        const sort = url.searchParams.get("sort") || "price-asc";
-        const hasLatitude = url.searchParams.has("latitude");
-        const hasLongitude = url.searchParams.has("longitude");
-        if (hasLatitude !== hasLongitude) fail(400, "Both latitude and longitude are required for nearby search.");
-        const searchLatitude = hasLatitude ? coordinate(url.searchParams.get("latitude"), "Latitude", -90, 90) : null;
-        const searchLongitude = hasLongitude ? coordinate(url.searchParams.get("longitude"), "Longitude", -180, 180) : null;
-        if (!Number.isFinite(maxPrice) && maxPrice !== Infinity || maxPrice < 0) fail(400, "Maximum price must be a non-negative number.");
-        let listings = data.listings.flatMap((listing) => {
-          const medicine = data.medicines.find((item) => item.id === listing.medicineId);
-          const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && item.status === "approved");
-          if (!medicine || !pharmacy) return [];
-          const searchable = `${medicine.name} ${medicine.genericName} ${medicine.category} ${pharmacy.name}`.toLowerCase();
-          if (q && !searchable.includes(q)) return [];
-          if (!hasLatitude && location && !pharmacy.location.toLowerCase().includes(location)) return [];
-          if (listing.price > maxPrice) return [];
-          const distanceKm = hasLatitude && Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
-            ? calculateDistanceKm(searchLatitude, searchLongitude, pharmacy.latitude, pharmacy.longitude)
-            : null;
-          return [{ ...pharmacySummary(pharmacy), ...medicine, id: listing.id, medicineId: medicine.id, pharmacyId: pharmacy.id, pharmacy: pharmacy.name, price: Number(listing.price), stock: Number(listing.stock), distanceKm }];
-        });
-        if (user?.role === "patient" && q) {
-          data.history.unshift({ id: id("search"), userId: user.id, query: url.searchParams.get("q").trim(), createdAt: new Date().toISOString() });
-          data.history = data.history.slice(0, 3000);
-          store.save();
-        }
-        listings.sort((a, b) => {
-          if (hasLatitude && a.distanceKm !== b.distanceKm) {
-            if (a.distanceKm === null) return 1;
-            if (b.distanceKm === null) return -1;
-            return a.distanceKm - b.distanceKm;
-          }
-          return sort === "price-desc" ? b.price - a.price : sort === "rating" ? b.rating - a.rating : a.price - b.price;
-        });
-        return send(200, { medicines: listings, total: listings.length });
-      }
-      const medicineRoute = pathname.match(/^\/api\/medicines\/([^/]+)$/);
-      if (method === "GET" && medicineRoute) {
-        const medicine = data.medicines.find((item) => item.id === decodeURIComponent(medicineRoute[1]));
-        if (!medicine) fail(404, "Medicine not found.");
-        const listings = data.listings.filter((listing) => listing.medicineId === medicine.id).flatMap((listing) => {
-          const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && item.status === "approved");
-          return pharmacy ? [{ id: listing.id, price: Number(listing.price), stock: Number(listing.stock), ...pharmacySummary(pharmacy) }] : [];
-        });
-        const alternatives = data.medicines.filter((item) => item.id !== medicine.id && item.genericName === medicine.genericName).map((item) => item.name);
-        return send(200, { medicine, listings, alternatives });
-      }
       if (method === "GET" && pathname === "/api/pharmacies") {
         const location = (url.searchParams.get("location") || "").trim().toLowerCase();
         const hasLatitude = url.searchParams.has("latitude");
@@ -244,48 +183,6 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
           });
         return send(200, { pharmacies });
       }
-      if (method === "POST" && pathname === "/api/auth/register") {
-        const name = text(body.name, "Name", 80);
-        const email = validEmail(body.email);
-        const password = validPassword(body.password);
-        const role = body.role || "patient";
-        if (!["patient", "owner"].includes(role)) fail(400, "Choose patient or medical store owner.");
-        if (data.users.some((item) => safeEqualText(item.email, email))) fail(409, "An account with that email already exists.");
-        const newUser = { id: id("user"), name, email, passwordHash: hashPassword(password), role, active: true };
-        data.users.push(newUser);
-        let message = "Your account is ready.";
-        if (role === "owner") {
-          const latitude = coordinate(body.latitude, "Latitude", -90, 90);
-          const longitude = coordinate(body.longitude, "Longitude", -180, 180);
-          if ((latitude === null) !== (longitude === null)) fail(400, "Both latitude and longitude are required for a store location.");
-          const pharmacy = { id: id("pharmacy"), ownerId: newUser.id, name: text(body.pharmacyName, "Pharmacy name", 100), location: text(body.location, "Location", 160), address: text(body.address || body.location, "Address", 200), phone: text(body.phone || "Not provided", "Phone", 32), latitude, longitude, status: "pending", rating: 0, createdAt: new Date().toISOString() };
-          data.pharmacies.push(pharmacy);
-          message = "Your account is ready. Your pharmacy registration is awaiting admin approval.";
-        }
-        audit(newUser.email, "account.registered", newUser.role);
-        store.save();
-        return send(201, { token: signToken(newUser), user: publicUser(newUser), message });
-      }
-      if (method === "POST" && pathname === "/api/auth/login") {
-        const email = validEmail(body.email);
-        const account = data.users.find((item) => safeEqualText(item.email, email));
-        if (!account || !verifyPassword(String(body.password || ""), account.passwordHash)) fail(401, "Email or password is incorrect.");
-        if (!account.active) fail(403, "This account has been suspended. Contact the platform administrator.");
-        return send(200, { token: signToken(account), user: publicUser(account) });
-      }
-      if (method === "GET" && pathname === "/api/auth/me") {
-        return send(200, { user: publicUser(requireUser()) });
-      }
-      if (method === "GET" && pathname === "/api/profile") {
-        const current = requireUser();
-        return send(200, { user: publicUser(current) });
-      }
-      if (method === "PATCH" && pathname === "/api/profile") {
-        const current = requireUser();
-        if (body.name !== undefined) current.name = text(body.name, "Name", 80);
-        store.save();
-        return send(200, { user: publicUser(current) });
-      }
       if (method === "GET" && pathname === "/api/search-history") {
         const current = requireRole("patient");
         return send(200, { history: data.history.filter((item) => item.userId === current.id).slice(0, 100) });
@@ -303,14 +200,14 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         const pharmacy = data.pharmacies.find((item) => item.id === body.pharmacyId && item.status === "approved");
         if (!pharmacy) fail(404, "Pharmacy not found.");
         if (!data.savedPharmacies.some((item) => item.userId === current.id && item.pharmacyId === pharmacy.id)) data.savedPharmacies.push({ userId: current.id, pharmacyId: pharmacy.id, createdAt: new Date().toISOString() });
-        store.save();
+        await saveApplicationData();
         return send(201, { message: "Pharmacy saved." });
       }
       if (method === "DELETE" && pathname.startsWith("/api/saved-pharmacies/")) {
         const current = requireRole("patient");
         const pharmacyId = decodeURIComponent(pathname.split("/").pop());
         data.savedPharmacies = data.savedPharmacies.filter((item) => item.userId !== current.id || item.pharmacyId !== pharmacyId);
-        store.save();
+        await saveApplicationData();
         return send(200, { message: "Saved pharmacy removed." });
       }
       if (method === "POST" && pathname === "/api/reservations") {
@@ -326,7 +223,7 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         const reservation = { id: id("reservation"), userId: current.id, pharmacyId: pharmacy.id, listingId: listing.id, medicine: medicine.name, quantity, status: "pending", createdAt: new Date().toISOString() };
         data.reservations.unshift(reservation);
         audit(current.email, "reservation.created", reservation.id);
-        store.save();
+        await saveApplicationData();
         return send(201, { message: `Request sent to ${pharmacy.name}. The pharmacy will confirm availability.`, reservation: { id: reservation.id, status: reservation.status } });
       }
       const ratingRoute = pathname.match(/^\/api\/pharmacies\/([^/]+)\/ratings$/);
@@ -340,7 +237,7 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         if (data.ratings.some((item) => item.userId === current.id && item.pharmacyId === pharmacy.id)) fail(409, "You have already rated this pharmacy.");
         data.ratings.push({ id: id("rating"), userId: current.id, pharmacyId: pharmacy.id, rating, createdAt: new Date().toISOString() });
         pharmacy.rating = Number((data.ratings.filter((item) => item.pharmacyId === pharmacy.id).reduce((sum, item) => sum + item.rating, 0) / data.ratings.filter((item) => item.pharmacyId === pharmacy.id).length).toFixed(1));
-        store.save();
+        await saveApplicationData();
         return send(201, { rating: pharmacy.rating });
       }
       if (method === "POST" && pathname === "/api/reports") {
@@ -348,16 +245,8 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         const report = { id: id("report"), userId: current.id, reporter: current.email, type: text(body.type, "Report type", 50), subject: text(body.subject, "Subject", 120), details: text(body.details, "Details", 1000), status: "open", createdAt: new Date().toISOString() };
         data.reports.unshift(report);
         audit(current.email, "report.created", report.id);
-        store.save();
+        await saveApplicationData();
         return send(201, { report: { id: report.id, status: report.status } });
-      }
-      if (pathname === "/api/owner/dashboard" && method === "GET") {
-        const current = requireRole("owner");
-        const pharmacy = data.pharmacies.find((item) => item.ownerId === current.id);
-        if (!pharmacy) fail(404, "No pharmacy is associated with this account.");
-        const listings = data.listings.filter((item) => item.pharmacyId === pharmacy.id).map((item) => ({ ...data.medicines.find((medicine) => medicine.id === item.medicineId), ...item }));
-        const reservations = data.reservations.filter((item) => item.pharmacyId === pharmacy.id).map((item) => ({ ...item, customer: data.users.find((candidate) => candidate.id === item.userId)?.name || "Customer" }));
-        return send(200, { pharmacy, listings, reservations, stats: { listingCount: listings.length, inStock: listings.filter((item) => item.stock > 0).length, rating: pharmacy.rating || 0 } });
       }
       if (pathname === "/api/owner/profile" && method === "GET") {
         const current = requireRole("owner");
@@ -380,46 +269,8 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
           pharmacy.latitude = latitude;
           pharmacy.longitude = longitude;
         }
-        store.save();
+        await saveApplicationData();
         return send(200, { pharmacy });
-      }
-      if (pathname === "/api/owner/medicines" && method === "POST") {
-        const current = requireRole("owner");
-        const pharmacy = data.pharmacies.find((item) => item.ownerId === current.id);
-        if (!pharmacy) fail(404, "No pharmacy is associated with this account.");
-        const medicine = { id: id("medicine"), name: text(body.name, "Medicine name", 100), genericName: text(body.genericName, "Generic name", 120), category: text(body.category, "Category", 80), info: "" };
-        const price = positiveNumber(body.price, "Price", true);
-        const stock = positiveNumber(body.stock, "Stock", false);
-        data.medicines.push(medicine);
-        data.listings.push({ id: id("listing"), medicineId: medicine.id, pharmacyId: pharmacy.id, price, stock });
-        audit(current.email, "inventory.created", medicine.name);
-        store.save();
-        return send(201, { medicine });
-      }
-      const ownerMedicineRoute = pathname.match(/^\/api\/owner\/medicines\/([^/]+)$/);
-      if (ownerMedicineRoute && method === "PATCH") {
-        const current = requireRole("owner");
-        const pharmacy = data.pharmacies.find((item) => item.ownerId === current.id);
-        const listing = data.listings.find((item) => item.id === decodeURIComponent(ownerMedicineRoute[1]) && item.pharmacyId === pharmacy?.id);
-        if (!listing) fail(404, "Inventory item not found.");
-        if (body.price !== undefined) listing.price = positiveNumber(body.price, "Price", true);
-        if (body.stock !== undefined) listing.stock = positiveNumber(body.stock, "Stock", false);
-        const medicine = data.medicines.find((item) => item.id === listing.medicineId);
-        if (body.name !== undefined) medicine.name = text(body.name, "Medicine name", 100);
-        if (body.genericName !== undefined) medicine.genericName = text(body.genericName, "Generic name", 120);
-        if (body.category !== undefined) medicine.category = text(body.category, "Category", 80);
-        audit(current.email, "inventory.updated", medicine.name);
-        store.save();
-        return send(200, { listing });
-      }
-      if (ownerMedicineRoute && method === "DELETE") {
-        const current = requireRole("owner");
-        const pharmacy = data.pharmacies.find((item) => item.ownerId === current.id);
-        const listing = data.listings.find((item) => item.id === decodeURIComponent(ownerMedicineRoute[1]) && item.pharmacyId === pharmacy?.id);
-        if (!listing) fail(404, "Inventory item not found.");
-        data.listings = data.listings.filter((item) => item.id !== listing.id);
-        store.save();
-        return send(200, { message: "Medicine listing removed." });
       }
       if (pathname === "/api/admin/dashboard" && method === "GET") {
         requireRole("admin");
@@ -437,7 +288,7 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         if (!pharmacy) fail(404, "Pharmacy not found.");
         pharmacy.status = body.status;
         audit(current.email, `pharmacy.${body.status}`, pharmacy.name);
-        store.save();
+        await saveApplicationData();
         return send(200, { pharmacy });
       }
       if (pathname === "/api/admin/users" && method === "GET") {
@@ -457,8 +308,9 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         if (account.id === current.id && body.active === false) fail(400, "You cannot suspend your own admin account.");
         if (typeof body.active !== "boolean") fail(400, "Active must be true or false.");
         account.active = body.active;
+        await users.updateById(account.id, { active: account.active });
         audit(current.email, account.active ? "account.activated" : "account.suspended", account.email);
-        store.save();
+        await saveApplicationData();
         const publicAccount = { ...account };
         delete publicAccount.passwordHash;
         return send(200, { user: publicAccount });
@@ -475,7 +327,7 @@ function createAppServer({ storePath = defaultStorePath } = {}) {
         if (!report) fail(404, "Report not found.");
         report.status = body.status;
         audit(current.email, `report.${body.status}`, report.id);
-        store.save();
+        await saveApplicationData();
         return send(200, { report });
       }
       if (pathname === "/api/admin/audit" && method === "GET") {
@@ -560,8 +412,28 @@ function positiveNumber(value, label, allowZero) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const server = createAppServer();
-  server.listen(port, host, () => console.log(`Medlytic API listening on http://${host}:${port}`));
+  async function startServer() {
+    const repositories = await connectMongoRepositories(process.env.MONGO_URI);
+    const data = await repositories.applicationData.load();
+    data.users = await repositories.users.findAll();
+    data.medicines = await repositories.medicines.findAllProducts();
+    data.listings = await repositories.medicines.findAllListings();
+    const server = createAppServer({
+      data,
+      userRepository: repositories.users,
+      medicineRepository: repositories.medicines,
+      applicationDataRepository: repositories.applicationData,
+    });
+    server.listen(port, host, () => console.log(`Medlytic API listening on http://${host}:${port}`));
+    server.on("close", () => {
+      repositories.close().catch((error) => console.error("Unable to close MongoDB connection:", error.name));
+    });
+  }
+
+  startServer().catch((error) => {
+    console.error("Unable to start Medlytic API. Check MONGO_URI and MongoDB connectivity.", error.name);
+    process.exitCode = 1;
+  });
 }
 
 export { createAppServer };
