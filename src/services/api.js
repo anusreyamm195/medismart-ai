@@ -20,6 +20,13 @@ async function localRequest(path, { method = "GET", body } = {}) {
   return data;
 }
 
+export async function askMedicalAssistant(question, medicine = null) {
+  return localRequest("/medical-chat", {
+    method: "POST",
+    body: { question, medicine },
+  });
+}
+
 function pharmacySummary(p) {
   return {
     id: p.id,
