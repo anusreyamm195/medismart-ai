@@ -92,6 +92,9 @@ export function createGroqMedicalChat({
         status: response.status,
         ...providerError,
       });
+      if (providerError.code === "invalid_api_key") {
+        throw chatError("Groq rejected the configured API key. Check GROQ_API_KEY and restart the API.", 502);
+      }
       throw chatError(
         response.status === 429
           ? "The medical assistant is busy. Please wait a moment and try again."

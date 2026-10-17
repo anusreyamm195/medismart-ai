@@ -273,7 +273,7 @@ test("Groq medical chat logs sanitized upstream errors", async () => {
   });
   await assert.rejects(groqChat({ question: "What might cause a headache?" }), {
     status: 502,
-    message: "The medical assistant is temporarily unavailable. Please try again.",
+    message: "Groq rejected the configured API key. Check GROQ_API_KEY and restart the API.",
   });
   assert.equal(logged[0].details.status, 401);
   assert.equal(logged[0].details.code, "invalid_api_key");
