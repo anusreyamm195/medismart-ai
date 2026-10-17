@@ -178,6 +178,15 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
   assert.equal((await api("/medicines?latitude=91&longitude=77")).status, 400);
 });
 
+test("medicine search accepts multiple comma-separated medicine names", async () => {
+  const result = await api("/medicines?q=Dolo%20650%2CCalpol%20650");
+  assert.equal(result.status, 200);
+  assert.deepEqual(
+    [...new Set(result.body.medicines.map((medicine) => medicine.name))].sort(),
+    ["Calpol 650", "Dolo 650"],
+  );
+});
+
 test("patients can reserve an available listing and see search history", async () => {
   const token = await login("patient@medlytic.local", "Patient123!");
   const listing = (await api("/medicines?q=Dolo", { token })).body.medicines.find((item) => item.stock > 0);

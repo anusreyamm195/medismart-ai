@@ -50,6 +50,72 @@ function matchesLocation(pharmacy, location) {
   return terms.some((term) => searchableLocation.includes(term));
 }
 
+function getSearchTerms(query) {
+  return [...new Set(query.split(/[,\n;]+/).map((term) => term.trim().toLowerCase()).filter(Boolean))];
+}
+
+async function addRoadDistances(result, latitude, longitude, radiusKm, sort) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || result.medicines.length === 0) return result;
+
+  const pharmacies = new Map();
+  for (const medicine of result.medicines) {
+    if (medicine.latitude === null || medicine.latitude === undefined
+      || medicine.longitude === null || medicine.longitude === undefined
+      || !Number.isFinite(Number(medicine.latitude)) || !Number.isFinite(Number(medicine.longitude))) {
+      throw new Error(`Road distance is unavailable for ${medicine.pharmacy}.`);
+    }
+    pharmacies.set(medicine.pharmacyId, medicine);
+  }
+
+  const destinations = [...pharmacies.values()];
+  const roadDistances = new Map();
+  for (let start = 0; start < destinations.length; start += 50) {
+    const batch = destinations.slice(start, start + 50);
+    const coordinates = [
+      `${longitude},${latitude}`,
+      ...batch.map(({ longitude: destinationLongitude, latitude: destinationLatitude }) => `${destinationLongitude},${destinationLatitude}`),
+    ].join(";");
+    const destinationIndexes = batch.map((_, index) => index + 1).join(";");
+    const url = `https://router.project-osrm.org/table/v1/driving/${coordinates}?sources=0&destinations=${destinationIndexes}&annotations=distance`;
+    let response;
+    try {
+      response = await fetch(url);
+    } catch {
+      throw new Error("Road-distance lookup is unavailable. Please try again.");
+    }
+    if (!response.ok) throw new Error("Road-distance lookup is unavailable. Please try again.");
+
+    const table = await response.json();
+    if (table.code !== "Ok" || !Array.isArray(table.distances?.[0])) {
+      throw new Error("Road-distance lookup failed. Please try again.");
+    }
+    batch.forEach((pharmacy, index) => {
+      const meters = table.distances[0][index];
+      if (!Number.isFinite(meters)) throw new Error(`A road route could not be found to ${pharmacy.pharmacy}.`);
+      roadDistances.set(pharmacy.pharmacyId, meters / 1000);
+    });
+  }
+
+  result.medicines = result.medicines
+    .map((medicine) => ({ ...medicine, distanceKm: roadDistances.get(medicine.pharmacyId) }))
+    .filter((medicine) => medicine.distanceKm <= radiusKm);
+
+  if (sort === "distance-asc") {
+    result.medicines.sort((a, b) => a.distanceKm - b.distanceKm);
+  } else if (sort === "distance-desc") {
+    result.medicines.sort((a, b) => b.distanceKm - a.distanceKm);
+  } else if (sort === "price-desc") {
+    result.medicines.sort((a, b) => b.price - a.price);
+  } else if (sort === "rating") {
+    result.medicines.sort((a, b) => b.rating - a.rating);
+  } else {
+    result.medicines.sort((a, b) => a.price - b.price);
+  }
+
+  result.total = result.medicines.length;
+  return result;
+}
+
 export async function searchMedicines({ q = "", location = "", maxPrice = "", sort = "price-asc", latitude, longitude, radiusKm = 50 } = {}, currentUser = null) {
   if (!supabase) {
     const params = new URLSearchParams();
@@ -62,10 +128,12 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
     }
     if (maxPrice !== "") params.set("maxPrice", maxPrice);
     if (sort) params.set("sort", sort);
-    return localRequest(`/medicines?${params}`);
+    const result = await localRequest(`/medicines?${params}`);
+    return addRoadDistances(result, latitude, longitude, radiusKm, sort);
   }
 
   const cleanQ = (q || "").trim().toLowerCase();
+  const searchTerms = getSearchTerms(cleanQ);
   const cleanLoc = (location || "").trim().toLowerCase();
   const parsedMax = maxPrice !== "" ? Number(maxPrice) : Infinity;
 
@@ -106,7 +174,7 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
       const pharm = l.pharmacy;
       const searchable = `${med.name} ${med.generic_name} ${med.category} ${pharm.name}`.toLowerCase();
 
-      if (cleanQ && !searchable.includes(cleanQ)) return [];
+      if (searchTerms.length && !searchTerms.some((term) => searchable.includes(term))) return [];
       if (cleanLoc && !matchesLocation(pharm, cleanLoc)) return [];
       const price = Number(l.price);
       if (Number.isFinite(parsedMax) && price > parsedMax) return [];
@@ -124,6 +192,8 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
         pharmacy: pharm.name,
         location: pharm.location,
         address: pharm.address,
+        latitude: pharm.latitude == null ? null : Number(pharm.latitude),
+        longitude: pharm.longitude == null ? null : Number(pharm.longitude),
         rating: Number(pharm.rating) || 0,
         distanceKm,
         price,
@@ -159,7 +229,7 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
     }
   }
 
-  return { medicines: results, total: results.length };
+  return addRoadDistances({ medicines: results, total: results.length }, latitude, longitude, radiusKm, sort);
 }
 
 export async function getMedicineDetails(medicineId) {

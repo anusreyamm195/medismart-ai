@@ -22,6 +22,7 @@ export async function handleMedicineRoute(context) {
 
   if (method === "GET" && pathname === "/api/medicines") {
     const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+    const searchTerms = [...new Set(q.split(/[,\n;]+/).map((term) => term.trim()).filter(Boolean))];
     const location = (url.searchParams.get("location") || "").trim().toLowerCase();
     const locationTerms = location.split(",").map((term) => term.trim()).filter(Boolean);
     const maxPrice = url.searchParams.has("maxPrice") ? Number(url.searchParams.get("maxPrice")) : Infinity;
@@ -40,7 +41,7 @@ export async function handleMedicineRoute(context) {
       const pharmacy = data.pharmacies.find((item) => item.id === medicine.pharmacyId && item.status === "approved");
       if (!pharmacy) return [];
       const searchable = `${medicine.name} ${medicine.genericName} ${medicine.category} ${pharmacy.name}`.toLowerCase();
-      if (q && !searchable.includes(q)) return [];
+      if (searchTerms.length && !searchTerms.some((term) => searchable.includes(term))) return [];
       const searchableLocation = `${pharmacy.location || ""} ${pharmacy.address || ""}`.toLowerCase();
       if (locationTerms.length && !locationTerms.some((term) => searchableLocation.includes(term))) return [];
       if (medicine.price > maxPrice) return [];
