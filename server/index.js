@@ -3,6 +3,7 @@ import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypt
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectMongoRepositories } from "./db/mongo.js";
+import { createGroqMedicalChat } from "./groq-medical-chat.js";
 import { handleAuthRoute } from "./routes/auth.routes.js";
 import { handleMedicineRoute } from "./routes/medicine.routes.js";
 
@@ -61,11 +62,13 @@ function createAppServer({
   userRepository: persistentUsers,
   medicineRepository,
   applicationDataRepository,
+  medicalAssistant = createGroqMedicalChat(),
 } = {}) {
   if (!applicationData || !persistentUsers || !medicineRepository || !applicationDataRepository) {
     throw new Error("MongoDB data and repositories are required to create the API server.");
   }
   const data = applicationData;
+  const chatRequests = new Map();
   for (const key of ["users", "pharmacies", "medicines", "listings", "history", "savedPharmacies", "reservations", "reports", "audit", "ratings"]) data[key] ||= [];
   const saveApplicationData = () => applicationDataRepository.save(data);
   const users = {
@@ -154,6 +157,30 @@ function createAppServer({
         send,
         fail,
       };
+      if (method === "POST" && pathname === "/api/medical-chat") {
+        const question = text(body.question, "Question", 1000);
+        const now = Date.now();
+        const clientAddress = req.socket.remoteAddress || "unknown";
+        if (chatRequests.size > 1000) {
+          for (const [address, timestamps] of chatRequests) {
+            const activeTimestamps = timestamps.filter((timestamp) => now - timestamp < 60_000);
+            if (activeTimestamps.length) chatRequests.set(address, activeTimestamps);
+            else chatRequests.delete(address);
+          }
+        }
+        const recent = (chatRequests.get(clientAddress) || []).filter((timestamp) => now - timestamp < 60_000);
+        if (recent.length >= 12) fail(429, "Too many chat requests. Please wait a minute and try again.");
+        recent.push(now);
+        chatRequests.set(clientAddress, recent);
+
+        const medicine = body.medicine && typeof body.medicine === "object" && !Array.isArray(body.medicine)
+          ? Object.fromEntries(["name", "genericName", "category", "info"]
+            .filter((key) => typeof body.medicine[key] === "string")
+            .map((key) => [key, body.medicine[key].trim().slice(0, key === "info" ? 1000 : 160)]))
+          : null;
+        const result = await medicalAssistant({ question, medicine });
+        return send(200, { answer: result.answer });
+      }
       if (await handleAuthRoute(routeContext)) return;
       if (await handleMedicineRoute(routeContext)) return;
 

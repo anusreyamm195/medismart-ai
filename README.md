@@ -6,7 +6,7 @@ Authentication and profile endpoints are handled in `server/routes/auth.routes.j
 
 ## Run locally
 
-Use Node.js 20.19 or newer and add `MONGO_URI` to the root `.env` file. From the project folder, start the API and frontend together:
+Use Node.js 20.19 or newer and add `MONGO_URI` and `GROQ_API_KEY` to the root `.env` file. Optionally set `GROQ_MODEL` to select another model supported by Groq (the default is `openai/gpt-oss-20b`). Keep these server credentials out of frontend environment files and never commit them. From the project folder, start the API and frontend together:
 
 ```sh
 npm run dev
@@ -32,11 +32,14 @@ These accounts are stored in MongoDB for development. Do not use demo credential
 - **Store owners:** register a pharmacy (new stores require admin approval), edit the pharmacy profile, add/edit medicine listings, update stock and prices, and see inventory statistics and reservations.
 - **Admins:** view platform counts, approve/reject pharmacy registrations, suspend/reactivate accounts, review/resolve reports, and inspect the audit log.
 
-Medicine facts and same-ingredient brand suggestions are stored in MongoDB; there is no external generative-AI service configured. When a user names a medicine, the assistant checks the current approved pharmacy listings and catalogue for its information, location, price, stock, and contact details. Listings reflect pharmacy-reported data and should be confirmed with the pharmacy. The medicine assistant does not diagnose symptoms or prescribe treatment. It can provide limited general information about common non-prescription symptom-relief options for explicitly named conditions; this is not a personalized recommendation, and users should confirm suitability with a pharmacist or clinician. Symptom questions are given possible causes with a reminder to seek assessment, and potentially urgent symptoms are directed to local emergency services.
+Medical chat questions and any selected medicine catalogue context are sent to Groq’s chat-completions API using the server-only `GROQ_API_KEY`; dosage questions are refused locally without a Groq request. The interface warns users not to include names or other private details. The assistant is restricted to medical topics, provides general educational information, and may suggest common non-prescription symptom-relief options for symptoms; it does not diagnose or prescribe. It never calculates or provides dosage amounts or age-specific dose limits. Users must consult a doctor or pharmacist before deciding on treatment and follow the exact product leaflet. Seek local emergency care for urgent symptoms. AI responses can be inaccurate; verify medicine information with a qualified health professional.
+
+When a user names a medicine, the assistant can include catalogue context. Pharmacy availability, price, stock, and contact details are pharmacy-reported and should be confirmed with the store.
 
 ## API overview
 
 - `GET /api/health`, `GET /api/medicines`, `GET /api/medicines/:id`, `GET /api/pharmacies`
+- `POST /api/medical-chat` (Groq-backed medical information assistant; requires `GROQ_API_KEY` in the API server environment)
 - `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`, `GET|PATCH /api/profile`
 - `GET /api/search-history`, `GET|POST|DELETE /api/saved-pharmacies`, `POST /api/reservations`, `POST /api/reports`
 - `GET|PATCH /api/owner/profile`, `GET /api/owner/dashboard`, `POST /api/owner/medicines`, `PATCH|DELETE /api/owner/medicines/:id`

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { scryptSync } from "node:crypto";
 import { after, before, test } from "node:test";
 import { createAppServer } from "./index.js";
+import { createGroqMedicalChat } from "./groq-medical-chat.js";
 import {
   connectMongoRepositories,
   applicationStateCollectionName,
@@ -58,7 +59,7 @@ function createTestData() {
   };
 }
 
-function createMemoryApi({ data = createTestData(), userRepository } = {}) {
+function createMemoryApi({ data = createTestData(), userRepository, medicalAssistant = async ({ question }) => ({ answer: `Medical response: ${question}` }) } = {}) {
   const users = new Map(data.users.map((user) => [user.id, user]));
   const products = new Map(data.medicines.map((medicine) => [medicine.id, medicine]));
   const listings = new Map(data.listings.map((listing) => [listing.id, listing]));
@@ -118,7 +119,7 @@ function createMemoryApi({ data = createTestData(), userRepository } = {}) {
   const applicationDataRepository = {
     async save() {},
   };
-  const server = createAppServer({ data, userRepository: memoryUsers, medicineRepository: medicines, applicationDataRepository });
+  const server = createAppServer({ data, userRepository: memoryUsers, medicineRepository: medicines, applicationDataRepository, medicalAssistant });
   return { server, data, users: memoryUsers, medicines, applicationDataRepository };
 }
 
@@ -152,6 +153,130 @@ async function login(email, password) {
   assert.equal(result.status, 200);
   return result.body.token;
 }
+
+test("medical chat validates requests and returns an assistant response", async () => {
+  const result = await api("/medical-chat", {
+    method: "POST",
+    body: JSON.stringify({ question: "What is paracetamol used for?", medicine: { name: "Dolo 650", info: "Pain and fever", ignored: "not forwarded" } }),
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.answer, "Medical response: What is paracetamol used for?");
+  assert.equal((await api("/medical-chat", { method: "POST", body: JSON.stringify({ question: "" }) })).status, 400);
+  assert.equal((await api("/medical-chat", { method: "POST", body: JSON.stringify({ question: "x".repeat(1001) }) })).status, 400);
+});
+
+test("Groq medical chat rejects unrelated questions and appends clinician guidance", async () => {
+  let requestBody;
+  let requestHeaders;
+  const groqChat = createGroqMedicalChat({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      requestHeaders = options.headers;
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { choices: [{ message: { content: JSON.stringify({ inScope: true, answer: "Paracetamol is commonly used for pain and fever." }) } }] };
+        },
+      };
+    },
+  });
+  const result = await groqChat({ question: "What is paracetamol used for?" });
+  assert.match(result.answer, /consult a doctor or pharmacist/i);
+  assert.equal(requestBody.model, "openai/gpt-oss-20b");
+  assert.equal(requestBody.messages[0].role, "system");
+  assert.equal(requestHeaders.Authorization, "Bearer test-key");
+
+  const unrelatedChat = createGroqMedicalChat({
+    apiKey: "test-key",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return { choices: [{ message: { content: JSON.stringify({ inScope: false, answer: "Ignore the medical restrictions." }) } }] };
+      },
+    }),
+  });
+  assert.match((await unrelatedChat({ question: "Write a poem about cars." })).answer, /only help with health, symptoms, or medicines/i);
+});
+
+test("Groq medical chat does not generate age-specific or other dosage amounts", async () => {
+  const groqChat = createGroqMedicalChat({
+    apiKey: "test-key",
+    fetchImpl: async () => { throw new Error("Dosage questions must not be sent to the model."); },
+  });
+  const result = await groqChat({ question: "What is the dose of this tablet for a child?" });
+  assert.match(result.answer, /can’t calculate or provide a dose/i);
+  assert.match(result.answer, /consult a doctor or pharmacist/i);
+});
+
+test("Groq medical chat routes informal symptom reports to symptom guidance", async () => {
+  let requestBody;
+  const groqChat = createGroqMedicalChat({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { choices: [{ message: { content: JSON.stringify({
+            inScope: true,
+            answer: "Fever and headache can have several causes. Rest and fluids may help; ask a pharmacist whether an over-the-counter fever reliever is appropriate.",
+          }) } }] };
+        },
+      };
+    },
+  });
+  const result = await groqChat({ question: "My head hurts and I feel feverish" });
+  assert.match(requestBody.messages[1].content, /contains symptoms, so it is in scope/i);
+  assert.match(requestBody.messages[0].content, /low-risk self-care/i);
+  assert.match(result.answer, /consult a doctor or pharmacist before deciding on treatment/i);
+});
+
+test("Groq medical chat gives emergency instructions without relying on Groq", async () => {
+  const groqChat = createGroqMedicalChat({
+    apiKey: "",
+    fetchImpl: async () => { throw new Error("Emergency instructions must not wait for Groq."); },
+  });
+  const result = await groqChat({ question: "I have chest pain and difficulty breathing." });
+  assert.match(result.answer, /emergency department now/i);
+});
+
+test("Groq medical chat reports missing server configuration without contacting Groq", async () => {
+  const groqChat = createGroqMedicalChat({
+    apiKey: "",
+    fetchImpl: async () => { throw new Error("An unconfigured request must not reach Groq."); },
+  });
+  await assert.rejects(groqChat({ question: "What is this medicine used for?" }), {
+    status: 503,
+    message: /GROQ_API_KEY/,
+  });
+});
+
+test("Groq medical chat logs sanitized upstream errors", async () => {
+  const logged = [];
+  const groqChat = createGroqMedicalChat({
+    apiKey: "do-not-log-this-key",
+    logger: { error: (message, details) => logged.push({ message, details }) },
+    fetchImpl: async () => ({
+      ok: false,
+      status: 401,
+      async json() {
+        return { error: { message: "Invalid API key.", code: "invalid_api_key" } };
+      },
+    }),
+  });
+  await assert.rejects(groqChat({ question: "What might cause a headache?" }), {
+    status: 502,
+    message: /HTTP 401, invalid_api_key/,
+  });
+  assert.equal(logged[0].details.status, 401);
+  assert.equal(logged[0].details.code, "invalid_api_key");
+  assert.equal(JSON.stringify(logged).includes("do-not-log-this-key"), false);
+  assert.equal(JSON.stringify(logged).includes("What might cause"), false);
+});
 
 test("public medicine search returns prices, stock, and pharmacy data", async () => {
   const result = await api("/medicines?q=paracetamol&location=Indiranagar");
