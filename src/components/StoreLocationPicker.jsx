@@ -10,12 +10,13 @@ const markerIcon = divIcon({
   iconAnchor: [11, 11],
 });
 
-function MapCenter({ position }) {
+function MapCenter({ position, initialPosition }) {
   const map = useMap();
 
   useEffect(() => {
-    if (position) map.setView([position.latitude, position.longitude], Math.max(map.getZoom(), 15));
-  }, [map, position]);
+    const center = position || initialPosition;
+    if (center) map.setView([center.latitude, center.longitude], Math.max(map.getZoom(), position ? 15 : 12));
+  }, [map, position, initialPosition]);
 
   return null;
 }
@@ -43,23 +44,24 @@ function MapSelection({ position, onSelect }) {
   );
 }
 
-export default function StoreLocationPicker({ position, onSelect, onUseCurrentLocation, locating, disabled }) {
+export default function StoreLocationPicker({ position, initialPosition = null, purpose = "store", onSelect, onUseCurrentLocation, locating, disabled }) {
+  const subject = purpose === "search" ? "search location" : "store location";
   return (
     <div className="store-location-picker">
       <MapContainer
-        center={position ? [position.latitude, position.longitude] : defaultCenter}
-        zoom={position ? 15 : 11}
+        center={position ? [position.latitude, position.longitude] : initialPosition ? [initialPosition.latitude, initialPosition.longitude] : defaultCenter}
+        zoom={position ? 15 : initialPosition ? 12 : 11}
         scrollWheelZoom
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <MapCenter position={position} />
+        <MapCenter position={position} initialPosition={initialPosition} />
         <MapSelection position={position} onSelect={onSelect} />
       </MapContainer>
       <div className="store-location-actions">
-        <small>{position ? "Pin set. Drag it to adjust, or click the map to move it." : "Click the map to pin your store location."}</small>
+        <small>{position ? "Pin set. Drag it to adjust, or click the map to move it." : `Click the map to choose your ${subject}.`}</small>
         <button
           className="button button-outline button-small"
           type="button"

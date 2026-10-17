@@ -43,15 +43,23 @@ function distanceBetweenKm(latitude, longitude, destinationLatitude, destination
   return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 }
 
-export async function searchMedicines({ q = "", location = "", maxPrice = "", sort = "price-asc", latitude, longitude, radiusKm = 10 } = {}, currentUser = null) {
+function matchesLocation(pharmacy, location) {
+  const terms = location.split(",").map((term) => term.trim()).filter(Boolean);
+  if (!terms.length) return true;
+  const searchableLocation = `${pharmacy.location || ""} ${pharmacy.address || ""}`.toLowerCase();
+  return terms.some((term) => searchableLocation.includes(term));
+}
+
+export async function searchMedicines({ q = "", location = "", maxPrice = "", sort = "price-asc", latitude, longitude, radiusKm = 50 } = {}, currentUser = null) {
   if (!supabase) {
     const params = new URLSearchParams();
     if (q.trim()) params.set("q", q.trim());
+    if (location.trim()) params.set("location", location.trim());
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
       params.set("latitude", latitude);
       params.set("longitude", longitude);
       params.set("radiusKm", radiusKm);
-    } else if (location.trim()) params.set("location", location.trim());
+    }
     if (maxPrice !== "") params.set("maxPrice", maxPrice);
     if (sort) params.set("sort", sort);
     return localRequest(`/medicines?${params}`);
@@ -99,8 +107,7 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
       const searchable = `${med.name} ${med.generic_name} ${med.category} ${pharm.name}`.toLowerCase();
 
       if (cleanQ && !searchable.includes(cleanQ)) return [];
-      if (!(Number.isFinite(latitude) && Number.isFinite(longitude))
-        && cleanLoc && !pharm.location.toLowerCase().includes(cleanLoc)) return [];
+      if (cleanLoc && !matchesLocation(pharm, cleanLoc)) return [];
       const price = Number(l.price);
       if (Number.isFinite(parsedMax) && price > parsedMax) return [];
       const distanceKm = Number.isFinite(latitude) && Number.isFinite(longitude)
@@ -128,7 +135,11 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
       }];
     });
 
-  if (sort === "price-desc") {
+  if (sort === "distance-desc" && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    results.sort((a, b) => (b.distanceKm ?? -1) - (a.distanceKm ?? -1));
+  } else if (sort === "distance-asc" && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    results.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
+  } else if (sort === "price-desc") {
     results.sort((a, b) => b.price - a.price);
   } else if (sort === "rating") {
     results.sort((a, b) => b.rating - a.rating);

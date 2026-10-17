@@ -62,6 +62,19 @@ async function reverseGeocode({ latitude, longitude }) {
   return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
 }
 
+async function geocodeLocation(location) {
+  const params = new URLSearchParams({ format: "jsonv2", limit: "1", q: location });
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`);
+  if (!response.ok) throw new Error("Location lookup is temporarily unavailable. Try selecting a point on the map.");
+  const [result] = await response.json();
+  const latitude = Number(result?.lat);
+  const longitude = Number(result?.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new Error("We couldn't find that city or area. Try another name or select a point on the map.");
+  }
+  return { latitude, longitude };
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("home");
@@ -74,9 +87,12 @@ function App() {
   const [registrationLocation, setRegistrationLocation] = useState("");
   const [registrationLocating, setRegistrationLocating] = useState(false);
   const registrationLocationRequest = useRef(0);
+  const searchLocationRequest = useRef(0);
   const [maxPrice, setMaxPrice] = useState("");
   const [sort, setSort] = useState("price-asc");
   const [radiusKm, setRadiusKm] = useState(10);
+  const [searchMapOpen, setSearchMapOpen] = useState(false);
+  const [searchMapCenter, setSearchMapCenter] = useState(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -113,7 +129,7 @@ function App() {
     }
   };
 
-  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates, searchRadiusKm = radiusKm) => {
+  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates, searchRadiusKm = radiusKm, searchSort = sort) => {
     setLoading(true);
     setError("");
     try {
@@ -122,7 +138,7 @@ function App() {
           q: searchQuery,
           location: locationQuery,
           maxPrice,
-          sort,
+          sort: searchSort,
           latitude: coordinates?.latitude,
           longitude: coordinates?.longitude,
           radiusKm: searchRadiusKm,
@@ -183,7 +199,55 @@ function App() {
 
   const handleSearch = async (event) => {
     event.preventDefault();
-    await search();
+    if (location.trim() && !userCoordinates) {
+      setLoading(true);
+      setError("");
+      try {
+        const locationQuery = location.trim();
+        const coordinates = await geocodeLocation(locationQuery);
+        setUserCoordinates(coordinates);
+        setSearchMapCenter(coordinates);
+        setRadiusKm(50);
+        setSort("distance-desc");
+        await search(query, locationQuery, coordinates, 50, "distance-desc");
+      } catch (err) {
+        setError(err.message || "Could not find medicines for that location.");
+        setLoading(false);
+      }
+      return;
+    }
+    await search(query, location, userCoordinates, radiusKm, userCoordinates ? sort : "price-asc");
+  };
+
+  const selectSearchLocation = async (coordinates) => {
+    setUserCoordinates(coordinates);
+    setSearchMapCenter(coordinates);
+    setRadiusKm(50);
+    setSort("distance-desc");
+    const request = ++searchLocationRequest.current;
+    const area = await reverseGeocode(coordinates);
+    if (request === searchLocationRequest.current) setLocation(area);
+  };
+
+  const toggleSearchMap = async () => {
+    if (searchMapOpen) {
+      setSearchMapOpen(false);
+      return;
+    }
+    setError("");
+    if (userCoordinates) {
+      setSearchMapCenter(userCoordinates);
+    } else if (location.trim()) {
+      try {
+        setSearchMapCenter(await geocodeLocation(location.trim()));
+      } catch (err) {
+        setError(err.message || "Could not locate that city or area.");
+        return;
+      }
+    } else {
+      setSearchMapCenter(null);
+    }
+    setSearchMapOpen(true);
   };
 
   const locateMe = async () => {
@@ -192,9 +256,12 @@ function App() {
     try {
       const coordinates = await getCurrentPosition();
       setUserCoordinates(coordinates);
+      setSearchMapCenter(coordinates);
+      setRadiusKm(50);
+      setSort("distance-desc");
       const nearbyLocation = await reverseGeocode(coordinates);
       setLocation(nearbyLocation);
-      await search(query, nearbyLocation, coordinates, radiusKm);
+      await search(query, nearbyLocation, coordinates, 50, "distance-desc");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -378,23 +445,35 @@ function App() {
             </div>
             <form className="search-form" onSubmit={handleSearch}>
               <label className="search-field"><span>⌕</span><input aria-label="Medicine name" placeholder="Medicine, brand or generic name" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-              <label className="search-field location-field"><span>⌖</span><input aria-label="Location" placeholder="City or area" value={location} onChange={(event) => { setLocation(event.target.value); setUserCoordinates(null); }} /></label>
+              <label className="search-field location-field"><span>⌖</span><input aria-label="Location" placeholder="City or area" value={location} onChange={(event) => { setLocation(event.target.value); setUserCoordinates(null); setSearchMapCenter(null); setSearchMapOpen(false); setSort("price-asc"); }} /></label>
               <button className="button button-outline button-small locate-button" type="button" onClick={locateMe} disabled={locating}>{locating ? "Locating…" : "Locate me"}</button>
+              <button className="button button-outline button-small map-select-button" type="button" onClick={toggleSearchMap} aria-expanded={searchMapOpen} aria-controls="search-location-map">{searchMapOpen ? "Close map" : "Select on map"}</button>
               <button className="button button-primary search-submit" type="submit" disabled={loading}>{loading ? "Searching…" : "Search medicines"} <span>↗</span></button>
             </form>
             <a className="map-attribution search-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">Location lookup © OpenStreetMap</a>
           </section>
 
           <section className="content-section results-section">
+            {searchMapOpen && <div className="search-location-map" id="search-location-map">
+              <StoreLocationPicker
+                position={userCoordinates}
+                initialPosition={searchMapCenter}
+                purpose="search"
+                onSelect={selectSearchLocation}
+                onUseCurrentLocation={locateMe}
+                locating={locating}
+                disabled={loading}
+              />
+            </div>}
             <div className="section-heading">
-              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>{userCoordinates ? `In-stock medicines within ${radiusKm} km, closest first.` : "Prices and stock reported by listed pharmacies."}</p></div>
+              <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>{userCoordinates ? `In-stock medicines within ${radiusKm} km${sort === "distance-desc" ? ", farthest first." : sort === "distance-asc" ? ", closest first." : "."}` : "Prices and stock reported by listed pharmacies."}</p></div>
               <div className="result-controls">
                 {userCoordinates && <label className="sort-control"><span>Within</span><select aria-label="Nearby search radius" value={radiusKm} onChange={(event) => {
                   const nextRadius = Number(event.target.value);
                   setRadiusKm(nextRadius);
-                  search(query, location, userCoordinates, nextRadius);
-                }}><option value="5">5 km</option><option value="10">10 km</option><option value="20">20 km</option><option value="50">50 km</option></select></label>}
-                <label className="sort-control"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option><option value="rating">Pharmacy rating</option></select></label>
+                  search(query, location, userCoordinates, nextRadius, sort);
+                }}><option value="5">5 km</option><option value="10">10 km</option><option value="20">20 km</option><option value="50">50 km</option><option value="100">100 km</option></select></label>}
+                <label className="sort-control"><span>Sort by</span><select value={sort} onChange={(event) => { const nextSort = event.target.value; setSort(nextSort); search(query, location, userCoordinates, radiusKm, nextSort); }}><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option><option value="rating">Pharmacy rating</option>{userCoordinates && <><option value="distance-desc">Distance: far to near</option><option value="distance-asc">Distance: near to far</option></>}</select></label>
               </div>
             </div>
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
@@ -555,7 +634,30 @@ function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
   const [form, setForm] = useState({ name: "", genericName: "", category: "", price: "", stock: "" });
   const [editing, setEditing] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [inventoryStatus, setInventoryStatus] = useState("all");
+  const [stockDrafts, setStockDrafts] = useState({});
+  const [updatingStockId, setUpdatingStockId] = useState(null);
   const listings = data?.listings || [];
+  const stockCounts = listings.reduce((counts, listing) => {
+    const stock = Number(listing.stock);
+    counts.all += 1;
+    if (stock === 0) counts.out += 1;
+    else if (stock <= 5) counts.low += 1;
+    else counts.in += 1;
+    return counts;
+  }, { all: 0, in: 0, low: 0, out: 0 });
+  const visibleListings = listings.filter((listing) => {
+    const search = inventorySearch.trim().toLowerCase();
+    const matchesSearch = !search || [listing.name, listing.genericName, listing.category]
+      .some((value) => value?.toLowerCase().includes(search));
+    const stock = Number(listing.stock);
+    const matchesStatus = inventoryStatus === "all"
+      || (inventoryStatus === "in" && stock > 5)
+      || (inventoryStatus === "low" && stock > 0 && stock <= 5)
+      || (inventoryStatus === "out" && stock === 0);
+    return matchesSearch && matchesStatus;
+  });
 
   const submit = async (event) => {
     event.preventDefault();
@@ -580,12 +682,25 @@ function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
   };
 
   const updateStock = async (listing, stock) => {
+    const quantity = Number(stock);
+    if (stock.trim() === "" || !Number.isInteger(quantity) || quantity < 0) {
+      onError("Enter a whole-number stock quantity of zero or more.");
+      return;
+    }
+    setUpdatingStockId(listing.id);
     try {
-      await updateOwnerStock(listing.id, stock);
+      await updateOwnerStock(listing.id, quantity);
+      setStockDrafts((drafts) => {
+        const nextDrafts = { ...drafts };
+        delete nextDrafts[listing.id];
+        return nextDrafts;
+      });
       onNotice("Stock updated.");
       onRefresh();
     } catch (err) {
       onError(err.message || "Failed to update stock.");
+    } finally {
+      setUpdatingStockId(null);
     }
   };
 
@@ -594,7 +709,43 @@ function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
     {data?.pharmacy && <StoreProfileEditor key={JSON.stringify(data.pharmacy)} pharmacy={data.pharmacy} user={user} onRefresh={onRefresh} onError={onError} onNotice={onNotice} />}
     <div className="dashboard-columns"><div className="panel"><h3>{editing ? "Edit medicine" : "Add a medicine"}</h3><form className="stack-form" onSubmit={submit}><label>Medicine name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Generic name<input required value={form.genericName} onChange={(e) => setForm({ ...form, genericName: e.target.value })} /></label><label>Category<input required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></label><div className="form-row"><label>Price (₹)<input type="number" min="0" step="0.01" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></label><label>Stock quantity<input type="number" min="0" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></label></div><button className="button button-primary" type="submit" disabled={submitting}>{submitting ? "Saving…" : (editing ? "Save changes" : "Add to inventory")}</button>{editing && <button className="text-button" type="button" onClick={() => { setEditing(null); setForm({ name: "", genericName: "", category: "", price: "", stock: "" }); }}>Cancel edit</button>}</form></div>
       <div className="panel"><h3>Customer requests</h3>{data?.reservations?.length ? data.reservations.map((item) => <div className="request-line" key={item.id}><span><b>{item.medicine}</b><small>{item.customer} · Qty {item.quantity}</small></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>) : <p className="muted-copy">Reservations for your listed medicines will appear here.</p>}</div></div>
-    <div className="panel inventory-panel"><h3>Medicine inventory <span className="subtle-count">{listings.length} listings</span></h3>{listings.length ? listings.map((listing) => <div className="inventory-line" key={listing.id}><span><b>{listing.name}</b><small>{listing.genericName} · ₹{listing.price.toFixed(2)}</small></span><label className="stock-control">Stock<input type="number" min="0" defaultValue={listing.stock} onBlur={(e) => { if (Number(e.target.value) !== listing.stock) updateStock(listing, Number(e.target.value)); }} /></label><button className="text-button" onClick={() => edit(listing)}>Edit</button></div>) : <EmptyDashboard text="Add your first medicine using the form above." />}</div>
+    <div className="panel inventory-panel">
+      <div className="inventory-heading">
+        <div><h3>Medicine inventory</h3><p>Search your listings and keep stock levels up to date.</p></div>
+        <span className="subtle-count">{listings.length} {listings.length === 1 ? "listing" : "listings"}</span>
+      </div>
+      {listings.length ? <>
+        <div className="inventory-tools">
+          <label className="inventory-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search medicine inventory" placeholder="Search by medicine, generic name or category" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} /></label>
+          <div className="inventory-filters" role="group" aria-label="Filter inventory by stock status">
+            {[
+              ["all", "All", stockCounts.all],
+              ["in", "In Stock", stockCounts.in],
+              ["low", "Low Stock", stockCounts.low],
+              ["out", "Out of Stock", stockCounts.out],
+            ].map(([status, label, count]) => <button key={status} type="button" className={inventoryStatus === status ? "inventory-filter active" : "inventory-filter"} aria-pressed={inventoryStatus === status} onClick={() => setInventoryStatus(status)}>{label}<span>{count}</span></button>)}
+          </div>
+        </div>
+        <div className="inventory-result-summary">
+          <span>Showing <strong>{visibleListings.length}</strong> of <strong>{listings.length}</strong> medicines</span>
+          {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="text-button" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); }}>Clear filters</button>}
+        </div>
+        <div className="inventory-list">
+          {visibleListings.length ? visibleListings.map((listing) => {
+            const stockValue = stockDrafts[listing.id] ?? String(listing.stock);
+            const stock = Number(listing.stock);
+            const status = stock === 0 ? "out" : stock <= 5 ? "low" : "in";
+            const canSave = stockValue.trim() !== "" && Number.isInteger(Number(stockValue)) && Number(stockValue) >= 0 && Number(stockValue) !== stock;
+            return <div className="inventory-line" key={listing.id}>
+              <div className="inventory-medicine"><span className="inventory-medicine-icon" aria-hidden="true">✚</span><span><b>{listing.name}</b><small>{listing.genericName} · {listing.category} · ₹{listing.price.toFixed(2)}</small></span></div>
+              <span className={`inventory-stock-status ${status}`}>{status === "out" ? "Out of Stock" : status === "low" ? "Low Stock" : "In Stock"}</span>
+              <div className="inventory-stock-editor"><label htmlFor={`inventory-stock-${listing.id}`}>Quantity</label><div><input id={`inventory-stock-${listing.id}`} type="number" min="0" step="1" value={stockValue} onChange={(event) => setStockDrafts((drafts) => ({ ...drafts, [listing.id]: event.target.value }))} /><button className="button button-outline button-small" type="button" disabled={!canSave || updatingStockId !== null} onClick={() => updateStock(listing, stockValue)}>{updatingStockId === listing.id ? "Saving…" : "Save"}</button></div></div>
+              <button className="text-button inventory-edit" type="button" onClick={() => edit(listing)}>Edit details</button>
+            </div>;
+          }) : <p className="inventory-empty">No medicines match these filters. Try another search or stock status.</p>}
+        </div>
+      </> : <EmptyDashboard text="Add your first medicine using the form above." />}
+    </div>
   </section>;
 }
 

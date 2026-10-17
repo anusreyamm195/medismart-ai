@@ -23,15 +23,16 @@ export async function handleMedicineRoute(context) {
   if (method === "GET" && pathname === "/api/medicines") {
     const q = (url.searchParams.get("q") || "").trim().toLowerCase();
     const location = (url.searchParams.get("location") || "").trim().toLowerCase();
+    const locationTerms = location.split(",").map((term) => term.trim()).filter(Boolean);
     const maxPrice = url.searchParams.has("maxPrice") ? Number(url.searchParams.get("maxPrice")) : Infinity;
-    const sort = url.searchParams.get("sort") || "price-asc";
     const hasLatitude = url.searchParams.has("latitude");
     const hasLongitude = url.searchParams.has("longitude");
+    const sort = url.searchParams.get("sort") || (hasLatitude ? "distance-asc" : "price-asc");
     if (hasLatitude !== hasLongitude) fail(400, "Both latitude and longitude are required for nearby search.");
     const searchLatitude = hasLatitude ? coordinate(url.searchParams.get("latitude"), "Latitude", -90, 90) : null;
     const searchLongitude = hasLongitude ? coordinate(url.searchParams.get("longitude"), "Longitude", -180, 180) : null;
     const radiusKm = hasLatitude
-      ? coordinate(url.searchParams.get("radiusKm") || "10", "Search radius", 1, 100)
+      ? coordinate(url.searchParams.get("radiusKm") || "50", "Search radius", 1, 100)
       : null;
     if (!Number.isFinite(maxPrice) && maxPrice !== Infinity || maxPrice < 0) fail(400, "Maximum price must be a non-negative number.");
     const medicines = await medicineRepository.findAll();
@@ -40,7 +41,8 @@ export async function handleMedicineRoute(context) {
       if (!pharmacy) return [];
       const searchable = `${medicine.name} ${medicine.genericName} ${medicine.category} ${pharmacy.name}`.toLowerCase();
       if (q && !searchable.includes(q)) return [];
-      if (!hasLatitude && location && !pharmacy.location.toLowerCase().includes(location)) return [];
+      const searchableLocation = `${pharmacy.location || ""} ${pharmacy.address || ""}`.toLowerCase();
+      if (locationTerms.length && !locationTerms.some((term) => searchableLocation.includes(term))) return [];
       if (medicine.price > maxPrice) return [];
       const distanceKm = hasLatitude && Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
         ? calculateDistanceKm(searchLatitude, searchLongitude, pharmacy.latitude, pharmacy.longitude)
@@ -64,10 +66,9 @@ export async function handleMedicineRoute(context) {
       await saveApplicationData();
     }
     listings.sort((a, b) => {
-      if (hasLatitude && a.distanceKm !== b.distanceKm) {
-        if (a.distanceKm === null) return 1;
-        if (b.distanceKm === null) return -1;
-        return a.distanceKm - b.distanceKm;
+      if (sort === "distance-desc") return (b.distanceKm ?? -1) - (a.distanceKm ?? -1);
+      if (sort === "distance-asc" || hasLatitude && !["price-asc", "price-desc", "rating"].includes(sort)) {
+        return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity);
       }
       return sort === "price-desc" ? b.price - a.price : sort === "rating" ? b.rating - a.rating : a.price - b.price;
     });
