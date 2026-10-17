@@ -78,6 +78,10 @@ export async function connectMongoRepositories(uri, { MongoClientClass = MongoCl
         async findAllListings() {
           return listings.find({}, { projection: { _id: 0 } }).toArray();
         },
+        async deleteListingsForPharmacies(pharmacyIds) {
+          const result = await listings.deleteMany({ pharmacyId: { $in: pharmacyIds } });
+          return result.deletedCount;
+        },
         async create(medicine) {
           const { listingId, price, stock, pharmacyId, ...product } = medicine;
           await medicines.insertOne(product);

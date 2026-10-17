@@ -108,12 +108,14 @@ h1, h2, h3, p { margin-top: 0; }
 .nearby-shop { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 10px; min-width: 0; padding: 13px; border: 1px solid #e3ebe4; border-radius: 8px; background: #fff; }
 .nearby-shop-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 8px; background: #f7efe5; color: #ac8050; font-size: 17px; }
 .nearby-shop-copy { min-width: 0; }
+.nearby-shop-details { width: 100%; border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; }
+.nearby-shop-details:focus-visible { border-radius: 4px; outline: 2px solid #78aa8c; outline-offset: 3px; }
 .nearby-shop-copy h4 { overflow: hidden; margin: 0 0 4px; color: #35594a; font: 700 12px Manrope, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .nearby-shop-copy p, .nearby-shop-copy small { display: block; overflow: hidden; margin: 0 0 3px; color: #77877e; font-size: 9px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .nearby-shop-copy small { color: #98a39c; }
 .nearby-shop-meta { display: flex; grid-column: 1 / 2; flex-direction: column; gap: 4px; align-items: flex-start; color: #7f8d84; font-size: 9px; }
 .nearby-shop-meta .rating { margin-left: 0; }
-.nearby-directions { grid-column: 2 / 3; justify-self: end; align-self: end; min-height: 32px; padding: 0 10px; font-size: 9px; }
+.nearby-details { grid-column: 2 / 3; justify-self: end; align-self: end; min-height: 32px; padding: 0 10px; font-size: 9px; }
 .nearby-shop-empty { padding: 20px 0; color: #87958d; font-size: 11px; }
 .medicine-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 17px; }
 .pharmacy-result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 17px; }
@@ -162,6 +164,11 @@ h1, h2, h3, p { margin-top: 0; }
 .card-actions .button { flex: 1; min-height: 37px; padding: 0 8px; font-size: 10px; }
 .icon-button { width: 37px; height: 37px; border: 1px solid #e3ebe5; border-radius: 8px; background: white; color: #618274; font-size: 20px; }
 .icon-button:hover { border-color: #a8c6b5; background: #f4f9f5; }
+.save-pharmacy-button { display: grid; flex: 0 0 37px; place-items: center; color: #648273; line-height: 1; transition: border-color .15s, background .15s, color .15s, transform .15s; }
+.save-pharmacy-button:hover:not(:disabled) { transform: scale(1.05); }
+.save-pharmacy-button.saved { border-color: #f0cdd0; background: #fff3f4; color: #d34f63; }
+.save-pharmacy-button.saved:hover:not(:disabled) { border-color: #e8aeb5; background: #ffeaed; }
+.save-pharmacy-button:disabled { cursor: wait; opacity: .65; }
 .empty-state { display: flex; min-height: 185px; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed #d8e5dc; border-radius: 12px; background: #fff; color: #85958c; text-align: center; }
 .empty-state > span { margin-bottom: 9px; color: #81a994; font-size: 25px; }
 .empty-state h3 { margin: 0 0 6px; color: #375e50; font: 700 15px Manrope, sans-serif; }
@@ -204,6 +211,10 @@ h1, h2, h3, p { margin-top: 0; }
 .reservation-cart-item-meta { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #eff2ee; padding-top: 10px; color: #7c8b82; font-size: 10px; }
 .reservation-cart-item-meta b { color: #385c4b; font-size: 12px; }
 .reservation-cart-date { display: block; margin-top: 9px; color: #a0aaa3; font-size: 9px; }
+.reservation-cart-item-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.reservation-remove-button { margin-top: 8px; border: 0; padding: 4px 0; background: transparent; color: #a34e48; font-size: 10px; font-weight: 700; }
+.reservation-remove-button:hover:not(:disabled) { color: #7f332e; text-decoration: underline; }
+.reservation-remove-button:disabled { cursor: wait; opacity: .6; }
 .reservation-cart-message { padding: 20px 5px; color: #7d8c83; font-size: 12px; text-align: center; }
 .reservation-cart-empty { display: flex; min-height: 260px; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
 .reservation-cart-empty > span { display: grid; width: 48px; height: 48px; margin-bottom: 13px; place-items: center; border-radius: 15px; background: #edf5ed; color: #408269; font-size: 21px; }
@@ -214,7 +225,7 @@ h1, h2, h3, p { margin-top: 0; }
 @keyframes cart-panel-in { from { transform: translateX(24px); opacity: .7; } to { transform: translateX(0); opacity: 1; } }
 @keyframes cart-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 .dashboard-section { min-height: 65vh; padding-top: 55px; }
-.dashboard-alert { position: relative; margin: 24px auto -60px; padding-right: 38px; }
+.dashboard-alert { position: relative; margin: 14px auto 0; padding-right: 38px; }
 .dashboard-heading { align-items: start; margin-bottom: 25px; }
 .dashboard-heading h2 { font-size: 31px; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin: 23px 0; }
@@ -225,6 +236,73 @@ h1, h2, h3, p { margin-top: 0; }
 .owner-overview-grid .metric-card { min-height: 98px; border-color: #e1e9e2; border-radius: 12px; box-shadow: 0 4px 14px rgba(34, 73, 53, .035); }
 .owner-overview-grid .metric-card span { font-size: 11px; }
 .owner-overview-grid .metric-card strong { font-size: 25px; font-variant-numeric: tabular-nums; }
+.owner-overview { padding-top: 35px; }
+.owner-overview-welcome { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 19px; }
+.owner-overview-welcome .eyebrow { color: #54856c; }
+.owner-overview-welcome h2 { margin: 6px 0 4px; color: #183e36; font: 750 28px/1.2 Manrope, sans-serif; letter-spacing: -.7px; }
+.owner-overview-welcome p { margin: 0; color: #819087; font-size: 12px; }
+.owner-overview-account { display: flex; align-items: center; gap: 9px; color: #587165; font-size: 11px; }
+.owner-overview-account > span { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #dce9df; border-radius: 50%; background: #eff6ef; color: #34785b; font-weight: 700; }
+.owner-overview-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; margin: 0 0 17px; }
+.owner-overview-metric { display: flex; min-height: 76px; align-items: center; gap: 12px; border: 1px solid #e5ece6; border-radius: 10px; padding: 13px 15px; background: #fff; box-shadow: 0 3px 12px rgba(34, 73, 53, .025); }
+.owner-overview-metric-icon { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border-radius: 10px; background: #e8f5ef; color: #16805c; font-size: 17px; font-weight: 700; }
+.owner-overview-metric-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.owner-overview-metric-copy small { color: #7c8e84; font-size: 10px; line-height: 1.35; }
+.owner-overview-metric-copy strong { color: #204a3d; font: 750 22px/1 Manrope, sans-serif; font-variant-numeric: tabular-nums; }
+.owner-overview-metric.low .owner-overview-metric-icon { background: #fff3dd; color: #d68108; }
+.owner-overview-metric.out .owner-overview-metric-icon { background: #fff0ef; color: #cf514c; }
+.owner-overview-metric.pending .owner-overview-metric-icon { background: #fff5e5; color: #c5841a; }
+.owner-overview-metric.ready .owner-overview-metric-icon { background: #eaf3ff; color: #4385cf; }
+.owner-overview-panel { min-width: 0; border: 1px solid #e3eae4; border-radius: 11px; background: #fff; box-shadow: 0 4px 15px rgba(34, 73, 53, .025); }
+.owner-overview-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 17px; }
+.owner-overview-panel-heading > div, .owner-overview-section-heading > div { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.owner-overview-panel-icon { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 9px; background: #e9f5ee; color: #197558; font-size: 15px; }
+.owner-overview-panel-heading h3, .owner-overview-section-heading h3 { margin: 0 0 4px; color: #264b3e; font: 700 13px Manrope, sans-serif; }
+.owner-overview-panel-heading p, .owner-overview-section-heading p { margin: 0; color: #839087; font-size: 10px; }
+.owner-overview-panel-heading .button { flex: 0 0 auto; }
+.owner-overview-table-wrap { overflow-x: auto; border-top: 1px solid #edf1ed; }
+.owner-overview-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+.owner-overview-table th { padding: 10px 13px; background: #f7f9f7; color: #74867c; font-size: 9px; font-weight: 700; }
+.owner-overview-table td { height: 42px; border-top: 1px solid #f0f3ef; padding: 7px 13px; color: #586d62; font-size: 10px; }
+.owner-overview-table tbody tr:hover { background: #fbfdfb; }
+.owner-overview-table td:first-child { display: flex; align-items: center; gap: 8px; }
+.owner-reservation-number { color: #7c9c89; font-size: 9px; }
+.owner-reservation-id { color: #456b58; font-weight: 650; }
+.owner-overview-table .status-tag { font-size: 8px; }
+.owner-mark-received { border: 1px solid #cfe4d4; border-radius: 6px; padding: 5px 8px; background: #f2faf4; color: #34734e; font: 650 9px Manrope, sans-serif; cursor: pointer; white-space: nowrap; }
+.owner-mark-received:hover:not(:disabled) { border-color: #9bc9a8; background: #e9f6ec; }
+.owner-mark-received:disabled { cursor: wait; opacity: .65; }
+.status-tag.received { background: #e8f5ec; color: #387c55; }
+.status-tag.ready_for_pickup, .status-tag.ready, .status-tag.accepted { background: #eaf3ff; color: #3d79b8; }
+.status-tag.collected, .status-tag.completed { background: #e8f5ec; color: #387c55; }
+.status-tag.cancelled, .status-tag.rejected { background: #fff0ef; color: #ae514a; }
+.owner-overview-empty { display: flex; min-height: 140px; align-items: center; flex-direction: column; justify-content: center; border-top: 1px solid #edf1ed; padding: 22px; text-align: center; }
+.owner-overview-empty > span { display: grid; width: 35px; height: 35px; margin-bottom: 9px; place-items: center; border-radius: 10px; background: #f0f6f1; color: #589070; }
+.owner-overview-empty b { color: #496858; font-size: 11px; }
+.owner-overview-empty p, .owner-overview-compact-empty { margin: 5px 0 0; color: #87948c; font-size: 10px; line-height: 1.5; }
+.owner-overview-activity { margin-top: 16px; }
+.owner-overview-section-heading { margin: 0 0 10px; }
+.owner-overview-section-heading > div { justify-content: flex-start; }
+.owner-overview-section-heading > div > button { margin-left: auto; }
+.owner-overview-activity-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.owner-overview-activity-grid > .owner-overview-panel { padding: 14px 16px; }
+.owner-overview-subheading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 12px; }
+.owner-overview-subheading > div { display: flex; align-items: center; gap: 9px; }
+.owner-overview-small-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: #fff5e5; color: #bf8018; }
+.owner-overview-small-icon.recent { background: #eaf4ff; color: #4384bd; }
+.owner-overview-subheading h4 { margin: 0 0 3px; color: #315548; font: 700 11px Manrope, sans-serif; }
+.owner-overview-subheading p { margin: 0; color: #8a978f; font-size: 9px; }
+.owner-overview-count { display: grid; min-width: 26px; height: 26px; place-items: center; border-radius: 50%; background: #fff5e5; color: #a9731c; font-size: 10px; font-weight: 700; }
+.owner-overview-stock-list, .owner-overview-recent-list { margin: 0; padding: 0; list-style: none; }
+.owner-overview-stock-list li, .owner-overview-recent-list li { display: flex; min-height: 43px; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #eff2ee; padding: 7px 0; }
+.owner-overview-stock-list li > span, .owner-overview-recent-list li > span:nth-child(2) { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.owner-overview-stock-list b, .owner-overview-recent-list b { overflow: hidden; color: #476356; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.owner-overview-stock-list small, .owner-overview-recent-list small { color: #95a198; font-size: 9px; }
+.owner-overview-stock-list strong { flex: 0 0 auto; color: #b67b1c; font-size: 9px; }
+.owner-overview-recent-list li { justify-content: flex-start; }
+.owner-overview-recent-list li > .status-tag { margin-left: auto; }
+.owner-overview-recent-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #6daf8a; box-shadow: 0 0 0 3px #eef7f0; }
+.owner-overview-compact-empty { padding: 16px 0 8px; }
 .dashboard-columns { display: grid; grid-template-columns: 1.1fr .9fr; gap: 15px; margin: 16px 0; }
 .panel { padding: 21px; border: 1px solid #e4ece5; border-radius: 11px; background: white; }
 .panel h3 { margin-bottom: 18px; color: #2c5044; font: 700 15px Manrope, sans-serif; }
@@ -303,6 +381,105 @@ h1, h2, h3, p { margin-top: 0; }
 .inventory-edit { justify-self: end; min-height: 34px; border: 1px solid #e0e9e1; border-radius: 7px; padding: 0 10px; background: white; color: #34745a; font-size: 11px; white-space: nowrap; transition: border-color .15s, background .15s; }
 .inventory-edit:hover { border-color: #b8d1bf; background: #f5faf5; }
 .inventory-empty { margin: 0; border-bottom: 1px solid #edf1ed; padding: 27px 12px; color: #788980; font-size: 12px; text-align: center; }
+.owner-store-dashboard { padding-top: 27px; }
+.owner-dashboard-tabs { position: sticky; z-index: 5; top: 0; display: flex; gap: 5px; overflow-x: auto; margin: 0 0 16px; border-bottom: 1px solid #e4ebe5; background: #f8faf7; scrollbar-width: thin; }
+.owner-dashboard-tab { flex: 0 0 auto; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; padding: 11px 14px; background: transparent; color: #718178; font: 650 11px Manrope, sans-serif; white-space: nowrap; }
+.owner-dashboard-tab:hover { color: #24624d; }
+.owner-dashboard-tab.active { border-bottom-color: #368367; color: #246b52; }
+.owner-store-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 13px; }
+.owner-store-summary-card { display: grid; min-width: 0; grid-template-columns: 30px 1fr; align-items: center; column-gap: 10px; row-gap: 4px; border: 1px solid #e3ebe4; border-radius: 10px; padding: 12px; background: #fff; }
+.owner-store-summary-card > span { display: grid; width: 30px; height: 30px; grid-row: span 2; place-items: center; border-radius: 8px; background: #edf5ef; color: #317757; font-size: 15px; }
+.owner-store-summary-card small { overflow: hidden; color: #819087; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.owner-store-summary-card strong { color: #214c3c; font: 750 19px/1 Manrope, sans-serif; font-variant-numeric: tabular-nums; }
+.owner-store-overview-grid, .owner-analytics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
+.owner-dashboard-panel { min-width: 0; margin: 0; padding: 16px; border-color: #e3ebe4; border-radius: 10px; box-shadow: 0 3px 12px rgba(30, 67, 48, .025); }
+.owner-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.owner-panel-heading h3 { margin: 0 0 4px; color: #284d3e; font: 700 13px Manrope, sans-serif; }
+.owner-panel-heading p { margin: 0; color: #87948d; font-size: 10px; }
+.owner-panel-heading > .text-button { flex: 0 0 auto; font-size: 10px; }
+.owner-activity-list { display: flex; flex-direction: column; }
+.owner-activity-list article { display: flex; min-width: 0; align-items: center; gap: 9px; border-top: 1px solid #eef2ee; padding: 10px 0; }
+.owner-activity-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #69a183; box-shadow: 0 0 0 3px #edf6ef; }
+.owner-activity-list article > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.owner-activity-list b, .owner-stock-watch b, .owner-frequent-list b { overflow: hidden; color: #405c4e; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.owner-activity-list small, .owner-stock-watch small, .owner-frequent-list small { color: #919e96; font-size: 9px; }
+.owner-activity-list .status-tag { font-size: 8px; }
+.owner-stock-watch { display: flex; flex-direction: column; }
+.owner-stock-watch > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #eef2ee; padding: 10px 0; }
+.owner-stock-watch > div > span:first-child, .owner-frequent-list li > span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.owner-stock-watch > div > span:last-child { color: #a36e26; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.owner-add-medicine { margin-bottom: 13px; }
+.owner-medicine-form { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: end; gap: 10px; }
+.owner-medicine-form label { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: #66796f; font-size: 9px; font-weight: 650; }
+.owner-medicine-form input { width: 100%; height: 35px; border: 1px solid #dfe8e0; border-radius: 6px; padding: 0 8px; color: #315449; font-size: 10px; }
+.owner-medicine-form-actions { display: flex; grid-column: 1 / -1; gap: 7px; }
+.owner-medicine-form-actions .button { min-height: 33px; }
+.owner-table-wrap { width: 100%; overflow-x: auto; border-top: 1px solid #edf1ed; }
+.owner-data-table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+.owner-data-table th { padding: 10px 11px; background: #f7f9f7; color: #75867c; font-size: 9px; font-weight: 700; }
+.owner-data-table td { height: 53px; border-top: 1px solid #eff2ef; padding: 8px 11px; color: #53695d; font-size: 10px; }
+.owner-data-table tbody tr:hover { background: #fbfdfb; }
+.owner-table-medicine { display: flex; align-items: center; gap: 9px; }
+.owner-table-medicine .inventory-medicine-icon { width: 30px; height: 30px; flex-basis: 30px; font-size: 13px; }
+.owner-table-medicine > span:last-child, .owner-customer-cell { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.owner-table-medicine b, .owner-customer-cell b { color: #315244; font-size: 10px; }
+.owner-table-medicine small, .owner-customer-cell small { color: #8b9991; font-size: 9px; }
+.owner-table-stock { min-width: 145px; }
+.owner-table-stock > div { gap: 5px; }
+.owner-table-stock input { width: 58px; height: 31px; }
+.owner-table-stock .button { min-height: 31px; }
+.owner-table-actions { display: flex; align-items: center; gap: 6px; }
+.owner-table-actions .inventory-edit { min-height: 29px; font-size: 9px; }
+.owner-delete-button { min-height: 29px; border: 1px solid #f0dfdd; border-radius: 6px; padding: 0 8px; background: #fff; color: #a8554e; font-size: 9px; font-weight: 650; }
+.owner-delete-button:hover:not(:disabled) { border-color: #e4bebb; background: #fff7f6; }
+.owner-delete-button:disabled { cursor: wait; opacity: .6; }
+.owner-reservations-view { padding: 0 0 4px; overflow: hidden; }
+.owner-reservations-view > .owner-panel-heading { padding: 15px 16px 0; }
+.owner-reservations-view .owner-table-wrap { border-top: 0; }
+.owner-analytics-grid > .owner-dashboard-panel { min-height: 180px; }
+.owner-analytics-activity { grid-column: 1 / -1; }
+.owner-trend-chart { display: grid; min-height: 133px; grid-template-columns: repeat(7, minmax(0, 1fr)); align-items: end; gap: 9px; padding: 10px 4px 0; }
+.owner-trend-day { display: flex; min-width: 0; height: 100%; align-items: center; flex-direction: column; justify-content: flex-end; gap: 6px; }
+.owner-trend-day strong { color: #496a57; font-size: 9px; font-variant-numeric: tabular-nums; }
+.owner-trend-bar-track { display: flex; width: min(28px, 100%); height: 76px; align-items: flex-end; overflow: hidden; border-radius: 5px 5px 2px 2px; background: #f0f5f0; }
+.owner-trend-bar-track span { width: 100%; min-height: 3px; border-radius: 5px 5px 2px 2px; background: linear-gradient(180deg, #64a783, #34765c); }
+.owner-trend-day small { color: #87968d; font-size: 8px; }
+.owner-frequent-list { display: flex; flex-direction: column; gap: 0; margin: 0; padding: 0; list-style: none; }
+.owner-frequent-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #eef2ee; padding: 10px 0; }
+.owner-frequent-list li > strong { color: #397455; font-size: 10px; white-space: nowrap; }
+.owner-settings-view { max-width: 850px; }
+.owner-settings-view .store-profile-panel { margin: 0; padding: 20px; border-color: #e2eae3; border-radius: 12px; box-shadow: 0 5px 18px rgba(30, 67, 48, .04); }
+.store-profile-heading { display: flex; align-items: center; gap: 13px; margin-bottom: 18px; }
+.store-profile-icon { display: grid; width: 43px; height: 43px; flex: 0 0 43px; place-items: center; border: 1px solid #dcebe0; border-radius: 12px; background: #eff7f0; color: #287455; font-size: 19px; }
+.store-profile-heading-copy { flex: 1; min-width: 0; }
+.store-profile-heading-copy .eyebrow { color: #54856c; font-size: 8px; letter-spacing: 1.2px; }
+.store-profile-heading h3 { margin: 3px 0 3px; color: #254b3b; font: 750 17px/1.25 Manrope, sans-serif; }
+.store-profile-heading p { margin: 0; color: #849188; font-size: 10px; line-height: 1.45; }
+.store-profile-heading > .button { flex: 0 0 auto; min-width: 70px; }
+.store-profile-form { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px 16px; }
+.store-profile-form label { min-width: 0; gap: 6px; color: #526c5e; font-size: 10px; font-weight: 650; }
+.store-profile-form input, .store-profile-form textarea { width: 100%; min-height: 40px; border: 1px solid #dfe8e0; border-radius: 7px; padding: 9px 11px; background: #fff; color: #294d3e; font: 500 11px/1.45 "DM Sans", sans-serif; transition: border-color .16s, box-shadow .16s, background .16s; }
+.store-profile-form textarea { min-height: 76px; resize: vertical; }
+.store-profile-form input:focus, .store-profile-form textarea:focus { border-color: #78aa8c; outline: 0; box-shadow: 0 0 0 3px rgba(86, 148, 115, .1); }
+.store-profile-form input:disabled, .store-profile-form textarea:disabled { border-color: #e7ece7; background: #f8faf8; color: #536b5e; opacity: 1; }
+.store-profile-form input[aria-invalid="true"], .store-profile-form textarea[aria-invalid="true"] { border-color: #d78981; background: #fffafa; }
+.store-profile-form .store-address-field { grid-column: 1 / -1; }
+.store-location-field { position: relative; }
+.store-location-help { color: #829288; font-size: 9px; font-weight: 400; line-height: 1.4; }
+.store-location-button { align-self: flex-start; min-height: 26px; border: 1px solid #e4ede5; border-radius: 6px; padding: 0 8px; background: #f7faf7; color: #458064; font-size: 9px; font-weight: 650; }
+.store-location-button:hover:not(:disabled) { border-color: #c5dccb; background: #f0f7f1; }
+.store-location-button:disabled { cursor: wait; opacity: .65; }
+.store-location-attribution { color: #a0aaa3; font-size: 8px; line-height: 1.3; }
+.store-profile-actions { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; border-top: 1px solid #edf1ed; padding-top: 13px; }
+.store-profile-actions .button { min-width: 112px; min-height: 35px; justify-content: center; gap: 7px; }
+.store-profile-feedback { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; border: 1px solid; border-radius: 7px; padding: 9px 11px; font-size: 10px; line-height: 1.45; }
+.store-profile-feedback > span { display: grid; width: 15px; height: 15px; flex: 0 0 15px; place-items: center; border-radius: 50%; font-size: 9px; font-weight: 800; }
+.store-profile-feedback.success { border-color: #d4e7d8; background: #f3faf4; color: #397451; }
+.store-profile-feedback.success > span { background: #e0f0e3; color: #327149; }
+.store-profile-feedback.error { border-color: #efd7d4; background: #fff7f6; color: #9b4f49; }
+.store-profile-feedback.error > span { background: #f9e8e6; color: #a54e47; }
+.store-settings-spinner { width: 12px; height: 12px; display: inline-block; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: store-settings-spin .7s linear infinite; }
+@keyframes store-settings-spin { to { transform: rotate(360deg); } }
 .admin-tabs { display: flex; gap: 5px; margin: 20px 0 13px; border-bottom: 1px solid #e7ece7; }
 .admin-tab { margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; padding: 12px 15px; background: transparent; color: #87968e; font-size: 11px; font-weight: 600; }
 .admin-tab.active { border-bottom-color: #438369; color: #2d7056; }
@@ -314,6 +491,24 @@ h1, h2, h3, p { margin-top: 0; }
   .inventory-stock-status { justify-self: start; }
   .inventory-stock-editor { justify-self: end; }
   .inventory-edit { grid-column: 1 / -1; justify-self: end; }
+  .owner-store-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .owner-store-summary-card:last-child { grid-column: 1 / -1; }
+  .owner-store-overview-grid, .owner-analytics-grid { grid-template-columns: 1fr; }
+  .owner-analytics-activity { grid-column: auto; }
+  .owner-medicine-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .owner-dashboard-tabs { margin-right: -14px; margin-left: -14px; padding: 0 10px; }
+  .owner-dashboard-tab { padding-right: 10px; padding-left: 10px; font-size: 10px; }
+  .owner-store-summary-card { grid-template-columns: 25px 1fr; column-gap: 7px; padding: 9px; }
+  .owner-store-summary-card > span { width: 25px; height: 25px; font-size: 12px; }
+  .owner-store-summary-card strong { font-size: 17px; }
+  .owner-panel-heading { align-items: flex-start; }
+  .owner-activity-list article { align-items: flex-start; flex-wrap: wrap; }
+  .owner-activity-list article .status-tag { margin-left: 16px; }
+  .owner-medicine-form { grid-template-columns: 1fr; }
+  .owner-medicine-form-actions { grid-column: auto; }
+  .owner-dashboard-panel { padding: 13px; }
 }
 .history-list { border: 1px solid #e4ece5; border-radius: 10px; background: #fff; }
 .history-list button { display: flex; align-items: center; width: 100%; gap: 14px; border: 0; border-bottom: 1px solid #edf1ec; padding: 14px 18px; background: transparent; text-align: left; }
@@ -324,8 +519,14 @@ h1, h2, h3, p { margin-top: 0; }
 .history-icon, .history-arrow { color: #76a58b; font-size: 19px; }
 .history-arrow { font-size: 14px; }
 .saved-pharmacy { min-height: 180px; }
+.saved-pharmacy[role="button"] { position: relative; cursor: pointer; transition: border-color .16s, box-shadow .16s, transform .16s; }
+.saved-pharmacy[role="button"]:hover { border-color: #c9ddcf; box-shadow: 0 12px 26px rgba(34, 73, 53, .09); transform: translateY(-2px); }
+.saved-pharmacy[role="button"]:focus-visible { outline: 3px solid #78aa8c; outline-offset: 3px; }
 .saved-pharmacy h3 { margin: 16px 0 6px; color: #2a5143; font: 700 15px Manrope, sans-serif; }
 .saved-pharmacy p { color: #87958d; font-size: 11px; }
+.saved-pharmacy-action { display: flex; align-items: center; justify-content: space-between; margin-top: 19px; border-top: 1px solid #edf1ed; padding-top: 12px; color: #34785d; font-size: 10px; font-weight: 700; }
+.saved-pharmacy-action > span { font-size: 14px; transition: transform .16s; }
+.saved-pharmacy[role="button"]:hover .saved-pharmacy-action > span { transform: translateX(3px); }
 .modal-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; overflow-y: auto; padding: 20px; background: rgba(20, 43, 35, .45); backdrop-filter: blur(3px); }
 .modal { position: relative; width: min(470px, 100%); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid #edf0eb; border-radius: 15px; padding: 30px; background: #fff; box-shadow: 0 25px 70px rgba(20, 43, 35, .19); }
 .modal-close { position: absolute; top: 14px; right: 16px; width: 31px; height: 31px; border: 0; border-radius: 50%; background: #f1f5f0; color: #527264; font-size: 20px; }
@@ -373,7 +574,72 @@ h1, h2, h3, p { margin-top: 0; }
 .alternatives small { color: #919d95; font-size: 9px; line-height: 1.5; }
 .listing-line { min-height: 52px; }
 .listing-line strong { color: #315e4b; font: 700 14px Manrope, sans-serif; white-space: nowrap; }
+.listing-directions { flex: 0 0 auto; }
+.pharmacy-detail-summary { margin: 18px 0; border: 1px solid #e4ece5; border-radius: 10px; padding: 15px; background: #fbfcfa; }
+.pharmacy-detail-summary p { margin: 8px 0 0; color: #65786e; font-size: 11px; line-height: 1.6; }
+.pharmacy-detail-summary a { color: #26745b; }
+.pharmacy-detail-summary .rating { color: #bc8c47; }
+.pharmacy-detail-directions { width: 100%; }
 .report-link { margin-top: 20px; }
+.medicine-detail-modal-backdrop { z-index: 60; padding: 16px; background: rgba(12, 35, 28, .56); backdrop-filter: blur(7px); }
+.modal.medicine-detail-modal { display: flex; width: min(670px, 100%); max-height: min(790px, calc(100vh - 32px)); flex-direction: column; overflow: hidden; border: 1px solid #e3ece4; border-radius: 18px; padding: 23px 25px 0; box-shadow: 0 28px 85px rgba(12, 35, 28, .26); animation: medicine-modal-in .18s ease-out; }
+.medicine-detail-modal .modal-close { z-index: 1; top: 18px; right: 18px; width: 34px; height: 34px; border: 1px solid #e4ece5; background: #f5f8f5; color: #456b59; font-size: 21px; transition: background .15s, transform .15s, border-color .15s; }
+.medicine-detail-modal .modal-close:hover { transform: rotate(90deg); border-color: #d0e1d3; background: #eaf3ec; }
+.medicine-detail-modal > .eyebrow { display: block; padding-right: 42px; color: #54856c; font-size: 8px; letter-spacing: 1.45px; }
+.medicine-detail-modal > h2 { margin: 3px 45px 0 0; color: #193f34; font: 750 25px/1.2 Manrope, sans-serif; letter-spacing: -.45px; }
+.medicine-detail-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 2px 18px 0; scrollbar-color: #cbdccf transparent; scrollbar-width: thin; }
+.medicine-detail-identity { display: flex; align-items: center; gap: 11px; margin: 0 46px 10px 0; }
+.medicine-detail-icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid #dcebe0; border-radius: 10px; background: #eff7f0; color: #287455; font-size: 16px; }
+.medicine-detail-identity .eyebrow { color: #54856c; font-size: 8px; letter-spacing: 1.3px; }
+.medicine-detail-identity .detail-generic { margin: 4px 0 0; color: #7d8d83; font-size: 10px; }
+.medicine-detail-modal .detail-info { margin: 0 0 11px; }
+.medicine-detail-modal .detail-info h3, .medicine-detail-modal .alternatives h3, .medicine-detail-modal .medicine-listings-heading h3 { margin: 0 0 5px; color: #31574a; font: 700 12px Manrope, sans-serif; }
+.medicine-detail-modal .detail-info > p { margin: 0; color: #687b70; font-size: 10px; line-height: 1.5; }
+.medicine-detail-modal .medical-disclaimer { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; border: 1px solid #f0e3cc; border-left: 3px solid #d8ac69; border-radius: 0 7px 7px 0; padding: 8px 10px; background: #fffbf4; color: #82704f; font-size: 9px; line-height: 1.45; }
+.medicine-detail-modal .medical-disclaimer > span { display: grid; width: 15px; height: 15px; flex: 0 0 15px; place-items: center; border-radius: 50%; background: #f6e9d1; color: #a77932; font-size: 9px; font-weight: 800; }
+.medicine-detail-modal .medical-disclaimer p { margin: 0; }
+.medicine-detail-modal .medicine-chat-section { margin: 10px 0; }
+.medicine-detail-modal .medicine-chat-toggle { display: flex; min-height: 38px; align-items: center; justify-content: center; gap: 8px; border-color: #d9e8dc; border-radius: 8px; background: #f6faf6; color: #2e7255; font-size: 10px; font-weight: 700; transition: border-color .15s, background .15s, transform .15s; }
+.medicine-detail-modal .medicine-chat-toggle::before { color: #4a946f; content: "✦"; font-size: 12px; }
+.medicine-detail-modal .medicine-chat-toggle:hover { transform: translateY(-1px); border-color: #b9d5c1; background: #eff7f0; }
+.medicine-detail-modal .medicine-chat { margin-top: 7px; }
+.medicine-detail-modal .alternatives { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 10px 0; border: 1px solid #e8eee8; border-radius: 8px; padding: 10px 11px; background: #fbfcfa; }
+.medicine-detail-modal .alternatives p { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; }
+.medicine-detail-modal .alternatives small { color: #87948c; font-size: 8px; line-height: 1.45; }
+.medicine-alternative-chip { display: inline-flex; align-items: center; border: 1px solid #dceade; border-radius: 14px; padding: 4px 8px; background: #f0f7f1; color: #3c7155; font-size: 9px; font-weight: 650; }
+.medicine-no-alternatives { color: #7c8b82; font-size: 9px; }
+.medicine-listings-section { margin-top: 10px; }
+.medicine-listings-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.medicine-listings-heading p { margin: 0; color: #89968e; font-size: 8px; }
+.medicine-listings-heading > span { border-radius: 12px; padding: 4px 7px; background: #eef5ef; color: #4f765f; font-size: 8px; font-weight: 700; white-space: nowrap; }
+.medicine-listings { border-top: 1px solid #e9efea; }
+.medicine-listing-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #eef2ee; padding: 9px 1px; }
+.medicine-listing-main { display: flex; min-width: 0; align-items: flex-start; gap: 9px; }
+.medicine-listing-store-icon { display: grid; width: 29px; height: 29px; flex: 0 0 29px; place-items: center; border-radius: 8px; background: #edf5ee; color: #488164; font-size: 14px; }
+.medicine-listing-store { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.medicine-listing-store > b { overflow: hidden; color: #355b49; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.medicine-listing-store > small { overflow: hidden; color: #819087; font-size: 8px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.medicine-listing-stock { color: #397953; font-size: 8px; font-weight: 650; }
+.medicine-listing-stock.low { color: #a37531; }
+.medicine-listing-stock.out { color: #a9544f; }
+.medicine-listing-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.medicine-listing-actions > strong { color: #285642; font: 750 13px Manrope, sans-serif; white-space: nowrap; }
+.medicine-listing-actions .listing-directions { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; border-radius: 16px; padding: 0 10px; font-size: 9px; }
+.medicine-listings-empty { border-top: 1px solid #e9efea; padding: 13px 0; color: #849188; font-size: 9px; }
+.medicine-detail-modal .report-link { display: inline-flex; align-items: center; gap: 5px; margin: 9px 0 0; padding: 5px 0; color: #4e8065; font-size: 9px; }
+.medicine-detail-modal .report-link:hover { color: #245d43; text-decoration: underline; }
+.medicine-detail-modal .report-link span { font-size: 11px; }
+@keyframes medicine-modal-in { from { transform: translateY(7px) scale(.99); opacity: .7; } to { transform: translateY(0) scale(1); opacity: 1; } }
+@media (max-width: 600px) {
+  .medicine-detail-modal-backdrop { align-items: center; padding: 10px; }
+  .modal.medicine-detail-modal { width: 100%; max-height: calc(100dvh - 20px); border-radius: 14px; padding: 18px 16px 0; }
+  .medicine-detail-modal > h2 { font-size: 22px; }
+  .medicine-detail-identity { margin-right: 38px; }
+  .medicine-detail-modal .modal-close { top: 13px; right: 13px; }
+  .medicine-listing-card { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .medicine-listing-main { width: 100%; }
+  .medicine-listing-actions { width: 100%; justify-content: space-between; padding-left: 38px; }
+}
 .stack-form textarea { width: 100%; resize: vertical; border: 1px solid #dfe8e0; border-radius: 7px; padding: 9px 10px; color: #315449; font-size: 12px; }
 
 @media (max-width: 900px) {
@@ -588,6 +854,28 @@ body { background: #fbfaf5; color: #103d3c; }
 .auth-benefits i { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: #e0f1e9; color: #267660; font-size: 11px; font-style: normal; }
 .auth-illustration { position: absolute; right: 0; bottom: 0; left: 0; height: 195px; overflow: hidden; background: linear-gradient(180deg, #d8f0e8a1, #c4e9dd); }
 .auth-illustration::before { position: absolute; right: -30px; bottom: -78px; left: -25px; height: 100px; border-radius: 50% 50% 0 0; background: #eff9f4; content: ""; }
+@media (max-width: 900px) {
+  .owner-overview-metric { padding: 12px; }
+  .owner-overview-table { min-width: 720px; }
+}
+@media (max-width: 640px) {
+  .owner-overview { padding-top: 28px; }
+  .owner-overview-welcome { align-items: flex-start; }
+  .owner-overview-welcome h2 { font-size: 24px; }
+  .owner-overview-account b { display: none; }
+  .owner-overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .owner-overview-metric { min-height: 70px; gap: 9px; padding: 10px; }
+  .owner-overview-metric-icon { width: 32px; height: 32px; flex-basis: 32px; }
+  .owner-overview-metric-copy small { font-size: 9px; }
+  .owner-overview-metric-copy strong { font-size: 19px; }
+  .owner-overview-panel-heading { align-items: flex-start; flex-direction: column; padding: 13px; }
+  .owner-overview-panel-heading .button { align-self: flex-end; }
+  .owner-overview-activity-grid { grid-template-columns: 1fr; }
+  .owner-overview-section-heading > div { align-items: flex-start; flex-wrap: wrap; }
+  .owner-overview-section-heading > div > button { width: 100%; margin-left: 42px; }
+  .owner-overview-recent-list li { align-items: flex-start; }
+  .owner-overview-recent-list li > .status-tag { font-size: 8px; }
+}
 .auth-bottle { position: absolute; z-index: 2; bottom: 18px; left: 105px; display: grid; width: 66px; height: 95px; place-items: center; border: 1px solid #d0d8c6; border-radius: 12px 12px 15px 15px; background: linear-gradient(90deg, #e5e6d8, #fffef5 20%, #faf8e9 80%, #dce0d2); box-shadow: 9px 11px 18px #2d67502c; transform: rotate(-4deg); }
 .auth-bottle::before { position: absolute; top: -13px; width: 48px; height: 18px; border: 1px solid #d5d9cf; border-radius: 5px 5px 2px 2px; background: repeating-linear-gradient(90deg, #fbfaf1 0 4px, #e4e4d8 5px 6px); content: ""; }
 .auth-bottle::after { position: absolute; top: 31px; right: 7px; left: 7px; height: 43px; border-radius: 4px; background: #e6f2e5; content: ""; }
@@ -615,7 +903,56 @@ body { background: #fbfaf5; color: #103d3c; }
 .auth-modal .modal-toggle b { color: #16715c; }
 .auth-form .store-location-picker { border-radius: 9px; }
 
+.saved-page { padding-top: 54px; }
+.saved-page-tabs { display: flex; gap: 7px; margin: 25px 0 22px; border-bottom: 1px solid #e4ece5; }
+.saved-page-tab { display: inline-flex; align-items: center; gap: 9px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; padding: 12px 15px; background: transparent; color: #72837a; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.saved-page-tab.active { border-bottom-color: #438369; color: #246d55; }
+.saved-page-tab > span { display: grid; min-width: 20px; height: 20px; place-items: center; border-radius: 20px; padding: 0 5px; background: #f0f5f0; color: #607b6a; font-size: 10px; }
+.saved-page-error { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 18px; border: 1px solid #efd7d4; border-radius: 9px; padding: 11px 14px; background: #fff7f6; color: #97554d; font-size: 11px; line-height: 1.5; }
+.saved-page-error button { flex: 0 0 auto; border: 0; background: transparent; color: #8e4c46; font-size: 11px; font-weight: 700; text-decoration: underline; }
+.saved-page-loading { display: flex; min-height: 200px; align-items: center; justify-content: center; gap: 10px; color: #73857a; font-size: 12px; }
+.liked-medicine-grid, .saved-pharmacy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.liked-medicine-card, .saved-pharmacy-card { min-width: 0; border: 1px solid #e5ece5; border-radius: 12px; padding: 17px; background: #fff; box-shadow: 0 5px 18px rgba(37, 73, 50, .035); transition: border-color .16s, box-shadow .16s, transform .16s; }
+.liked-medicine-card:hover, .saved-pharmacy-card:hover { border-color: #cddfd1; box-shadow: 0 10px 25px rgba(37, 73, 50, .07); transform: translateY(-1px); }
+.liked-medicine-card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.liked-medicine-card > header .medicine-icon, .saved-pharmacy-card-icon { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border-radius: 10px; background: #eff7f0; color: #438369; font-size: 18px; }
+.liked-medicine-card .inventory-stock-status { max-width: 100%; font-size: 9px; }
+.liked-medicine-card h3, .saved-pharmacy-card h3 { overflow-wrap: anywhere; margin: 15px 0 5px; color: #24473c; font: 750 16px/1.35 Manrope, "DM Sans", sans-serif; letter-spacing: -.25px; }
+.liked-medicine-generic { min-height: 17px; margin: 0; color: #829188; font-size: 10px; line-height: 1.5; }
+.liked-medicine-details { display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); gap: 12px; margin-top: 17px; border-top: 1px solid #edf1ed; padding-top: 13px; }
+.liked-medicine-details > span { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.liked-medicine-details small { color: #89988f; font-size: 9px; }
+.liked-medicine-details b { overflow: hidden; color: #3c5e4e; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.liked-medicine-details > span:first-child b { color: #28654e; font-size: 14px; }
+.liked-medicine-location { overflow: hidden; margin: 12px 0 0; color: #74857b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.liked-medicine-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; border-top: 1px solid #edf1ed; padding-top: 13px; }
+.liked-medicine-card > footer .button { min-height: 34px; padding: 0 11px; font-size: 10px; }
+.liked-medicine-remove, .saved-pharmacy-remove { border: 0; padding: 7px 2px; background: transparent; color: #a25852; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.liked-medicine-remove:disabled, .saved-pharmacy-remove:disabled { cursor: wait; opacity: .6; }
+.saved-pharmacy-card { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-content: start; column-gap: 13px; row-gap: 13px; }
+.saved-pharmacy-card-icon { grid-row: 1; margin-top: 2px; }
+.saved-pharmacy-card-copy { min-width: 0; }
+.saved-pharmacy-card h3 { margin: 0 0 5px; }
+.saved-pharmacy-card-copy > p { overflow: hidden; margin: 0 0 8px; color: #77877e; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.saved-pharmacy-card-copy .rating { color: #b18343; font-size: 10px; }
+.saved-pharmacy-card-actions { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #edf1ed; padding-top: 12px; }
+.saved-pharmacy-card-actions .button { min-height: 34px; padding: 0 11px; font-size: 10px; }
+.saved-page-empty { display: flex; min-height: 245px; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed #dbe6dc; border-radius: 12px; padding: 25px; background: #fcfdfb; text-align: center; }
+.saved-page-empty > span { display: grid; width: 43px; height: 43px; place-items: center; margin-bottom: 13px; border-radius: 13px; background: #eef6ef; color: #579173; font-size: 25px; }
+.saved-page-empty h3 { margin: 0 0 6px; color: #35594a; font: 700 15px Manrope, "DM Sans", sans-serif; }
+.saved-page-empty p { max-width: 310px; margin: 0 0 15px; color: #829188; font-size: 11px; line-height: 1.55; }
+.save-pharmacy-button, .save-store-button { display: inline-grid; width: 40px; min-width: 40px; height: 40px; place-items: center; border: 1px solid #e0e9e1; border-radius: 9px; background: #fff; color: #678276; font-size: 20px; line-height: 1; transition: background .16s, border-color .16s, color .16s; }
+.save-pharmacy-button:hover:not(:disabled), .save-pharmacy-button.saved { border-color: #f0ceca; background: #fff7f6; color: #c35f59; }
+.save-store-button:hover:not(:disabled), .save-store-button.saved { border-color: #c9dfd0; background: #f2f8f3; color: #34785d; }
+.save-pharmacy-button:disabled, .save-store-button:disabled { cursor: wait; opacity: .58; }
+.medicine-card .card-actions { flex-wrap: wrap; }
+
 @media (max-width: 700px) {
+  .saved-page { padding-top: 35px; }
+  .liked-medicine-grid, .saved-pharmacy-grid { grid-template-columns: 1fr; }
+  .saved-page-tabs { overflow-x: auto; margin-top: 18px; }
+  .saved-page-tab { padding-right: 11px; padding-left: 11px; font-size: 11px; }
+  .liked-medicine-card, .saved-pharmacy-card { padding: 14px; }
   .auth-modal-backdrop { align-items: start; padding: 12px; }
   .auth-modal { width: min(500px, 100%); height: auto; min-height: calc(100vh - 24px); max-height: calc(100vh - 24px); overflow-y: auto; border-radius: 20px; }
   .auth-layout { min-height: calc(100vh - 24px); grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
@@ -642,6 +979,9 @@ body { background: #fbfaf5; color: #103d3c; }
 }
 
 @media (max-width: 380px) {
+  .saved-page-tabs { gap: 0; }
+  .saved-page-tab { gap: 6px; padding-right: 8px; padding-left: 8px; font-size: 10px; }
+  .liked-medicine-card > footer .button, .saved-pharmacy-card-actions .button { padding: 0 8px; font-size: 9px; }
   .auth-story { padding-right: 17px; padding-left: 17px; }
   .auth-story-copy h2 { font-size: 25px; }
   .auth-benefits span { font-size: 7px; }

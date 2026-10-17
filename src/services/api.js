@@ -27,6 +27,8 @@ function pharmacySummary(p) {
     location: p.location,
     address: p.address,
     phone: p.phone,
+    latitude: p.latitude,
+    longitude: p.longitude,
     status: p.status,
     rating: Number(p.rating) || 0,
     createdAt: p.created_at,
@@ -169,13 +171,13 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
   if (error) throw new Error(error.message);
 
   let results = (listings || [])
-    .filter((l) => l.medicine && l.pharmacy && l.pharmacy.status === "approved")
+    .filter((l) => l.medicine && l.pharmacy && l.pharmacy.status === "approved" && l.pharmacy.owner_id)
     .flatMap((l) => {
       const med = l.medicine;
       const pharm = l.pharmacy;
       const searchable = `${med.name} ${med.generic_name} ${med.category} ${pharm.name}`.toLowerCase();
 
-      if (cleanQ && !searchable.includes(cleanQ)) return [];
+      if (searchTerms.length && !searchTerms.some((term) => searchable.includes(term))) return [];
       if (cleanLoc && !matchesLocation(pharm, cleanLoc)) return [];
       const price = Number(l.price);
       if (Number.isFinite(parsedMax) && price > parsedMax) return [];
@@ -250,11 +252,11 @@ export async function getNearbyPharmacies(location = "", coordinates = null) {
   const cleanLocation = location.trim().toLowerCase();
   const { data, error } = await supabase
     .from("pharmacies")
-    .select("id, name, location, address, phone, status, rating")
+    .select("id, name, location, address, phone, status, rating, owner_id")
     .eq("status", "approved");
   if (error) throw new Error(error.message);
   return (data || [])
-    .filter((pharmacy) => !cleanLocation || pharmacy.location.toLowerCase().includes(cleanLocation))
+    .filter((pharmacy) => pharmacy.owner_id && (!cleanLocation || pharmacy.location.toLowerCase().includes(cleanLocation)))
     .map((pharmacy) => ({ ...pharmacySummary(pharmacy), distanceKm: null }));
 }
 
@@ -271,6 +273,7 @@ export async function getApprovedPharmacies() {
     .from("pharmacies")
     .select("id, name, location, address")
     .eq("status", "approved")
+    .not("owner_id", "is", null)
     .order("name");
   if (error) throw new Error(error.message);
   return (data || []).map((pharmacy) => ({
@@ -302,21 +305,28 @@ export async function getMedicineDetails(medicineId) {
         location,
         address,
         phone,
+        latitude,
+        longitude,
         status,
-        rating
+        rating,
+        owner_id
       )
     `)
     .eq("medicine_id", medicine.id);
 
   const approvedListings = (listings || [])
-    .filter((l) => l.pharmacy && l.pharmacy.status === "approved")
+    .filter((l) => l.pharmacy && l.pharmacy.status === "approved" && l.pharmacy.owner_id)
     .map((l) => ({
       id: l.id,
       price: Number(l.price),
       stock: Number(l.stock),
       pharmacy: l.pharmacy.name,
+      pharmacyId: l.pharmacy.id,
       location: l.pharmacy.location,
       address: l.pharmacy.address,
+      phone: l.pharmacy.phone,
+      latitude: l.pharmacy.latitude === null || l.pharmacy.latitude === undefined ? null : Number(l.pharmacy.latitude),
+      longitude: l.pharmacy.longitude === null || l.pharmacy.longitude === undefined ? null : Number(l.pharmacy.longitude),
       rating: Number(l.pharmacy.rating) || 0,
     }));
 
@@ -593,6 +603,109 @@ export async function savePharmacy(userId, pharmacyId) {
   return { message: "Pharmacy saved to your profile." };
 }
 
+export async function removeSavedPharmacy(userId, pharmacyId) {
+  if (!supabase) {
+    return localRequest(`/saved-pharmacies/${encodeURIComponent(pharmacyId)}`, { method: "DELETE" });
+  }
+
+  const { error } = await supabase
+    .from("saved_pharmacies")
+    .delete()
+    .eq("user_id", userId)
+    .eq("pharmacy_id", pharmacyId);
+
+  if (error) throw new Error(error.message);
+  return { message: "Pharmacy removed from your saved stores." };
+}
+
+export async function getLikedMedicines(userId) {
+  if (!supabase) {
+    const { medicines } = await localRequest("/liked-medicines");
+    return medicines;
+  }
+
+  const { data, error } = await supabase
+    .from("liked_medicines")
+    .select(`
+      created_at,
+      medicine:medicines (
+        id,
+        name,
+        generic_name,
+        category,
+        info,
+        listings (
+          id,
+          price,
+          stock,
+          pharmacy:pharmacies (
+            id,
+            name,
+            location,
+            address,
+            status,
+            owner_id
+          )
+        )
+      )
+    `)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data || []).flatMap((item) => {
+    if (!item.medicine) return [];
+    const listings = (item.medicine.listings || [])
+      .filter((listing) => listing.pharmacy?.status === "approved" && listing.pharmacy.owner_id)
+      .sort((first, second) => Number(second.stock) - Number(first.stock) || Number(first.price) - Number(second.price));
+    const listing = listings[0];
+    return [{
+      id: item.medicine.id,
+      medicineId: item.medicine.id,
+      name: item.medicine.name,
+      genericName: item.medicine.generic_name || "",
+      category: item.medicine.category || "",
+      info: item.medicine.info || "",
+      listingId: listing?.id || null,
+      price: listing ? Number(listing.price) : null,
+      stock: listing ? Number(listing.stock) : 0,
+      pharmacyId: listing?.pharmacy.id || null,
+      pharmacy: listing?.pharmacy.name || "No approved pharmacy listing",
+      location: listing?.pharmacy.location || "",
+      address: listing?.pharmacy.address || "",
+      createdAt: item.created_at,
+    }];
+  });
+}
+
+export async function likeMedicine(userId, medicineId) {
+  if (!supabase) {
+    return localRequest("/liked-medicines", { method: "POST", body: { medicineId } });
+  }
+
+  const { error } = await supabase
+    .from("liked_medicines")
+    .upsert({ user_id: userId, medicine_id: medicineId }, { onConflict: "user_id,medicine_id", ignoreDuplicates: true });
+
+  if (error) throw new Error(error.message);
+  return { message: "Medicine added to Liked Medicines." };
+}
+
+export async function unlikeMedicine(userId, medicineId) {
+  if (!supabase) {
+    return localRequest(`/liked-medicines/${encodeURIComponent(medicineId)}`, { method: "DELETE" });
+  }
+
+  const { error } = await supabase
+    .from("liked_medicines")
+    .delete()
+    .eq("user_id", userId)
+    .eq("medicine_id", medicineId);
+
+  if (error) throw new Error(error.message);
+  return { message: "Medicine removed from Liked Medicines." };
+}
+
 export async function ratePharmacy(pharmacyId, rating) {
   if (!supabase) {
     await localRequest(`/pharmacies/${pharmacyId}/ratings`, { method: "POST", body: { rating } });
@@ -680,6 +793,23 @@ export async function getUserReservations(userId) {
   });
 }
 
+export async function removeUserReservation(userId, reservationId) {
+  if (!supabase) {
+    return localRequest(`/reservations/${encodeURIComponent(reservationId)}`, { method: "DELETE" });
+  }
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .delete()
+    .eq("id", reservationId)
+    .eq("user_id", userId)
+    .select("id");
+
+  if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error("Reservation not found or no longer available to remove.");
+  return { message: "Reservation removed." };
+}
+
 export async function submitReport(userId, { type, details, subject }) {
   if (!supabase) {
     await localRequest("/reports", { method: "POST", body: { type, details, subject } });
@@ -764,8 +894,10 @@ export async function getOwnerDashboard(userId) {
         id: r.id,
         medicine: matchListing?.name || "Medicine",
         customer: r.user?.name || "Customer",
+        customerEmail: r.user?.email || "",
         quantity: r.quantity,
         status: r.status,
+        createdAt: r.created_at,
       };
     });
   }
@@ -782,6 +914,71 @@ export async function getOwnerDashboard(userId) {
     listings: formattedListings,
     reservations: formattedReservations,
   };
+}
+
+export async function deleteOwnerMedicine(userId, listingId) {
+  if (!supabase) {
+    return localRequest(`/owner/medicines/${encodeURIComponent(listingId)}`, { method: "DELETE" });
+  }
+
+  const { data: pharmacy, error: pharmacyError } = await supabase
+    .from("pharmacies")
+    .select("id")
+    .eq("owner_id", userId)
+    .single();
+  if (pharmacyError) throw new Error(pharmacyError.message);
+  if (!pharmacy) throw new Error("No pharmacy found for your account.");
+
+  const { data, error } = await supabase
+    .from("listings")
+    .delete()
+    .eq("id", listingId)
+    .eq("pharmacy_id", pharmacy.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Inventory item not found or no longer available to remove.");
+  return { message: "Medicine listing removed." };
+}
+
+export async function updateOwnerReservationStatus(userId, reservationId, status) {
+  if (!["pending", "received"].includes(status)) throw new Error("Reservation status must be pending or received.");
+  if (!supabase) {
+    return localRequest(`/owner/reservations/${encodeURIComponent(reservationId)}`, {
+      method: "PATCH",
+      body: { status },
+    });
+  }
+
+  const { data: pharmacy, error: pharmacyError } = await supabase
+    .from("pharmacies")
+    .select("id")
+    .eq("owner_id", userId)
+    .single();
+  if (pharmacyError) throw new Error(pharmacyError.message);
+  if (!pharmacy) throw new Error("No pharmacy is associated with this account.");
+
+  const { data: listings, error: listingsError } = await supabase
+    .from("listings")
+    .select("id")
+    .eq("pharmacy_id", pharmacy.id);
+  if (listingsError) throw new Error(listingsError.message);
+  const listingIds = (listings || []).map((listing) => listing.id);
+  if (!listingIds.length) throw new Error("Reservation not found.");
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .update({ status })
+    .eq("id", reservationId)
+    .eq("status", status === "received" ? "pending" : "received")
+    .in("listing_id", listingIds)
+    .select("id, status")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`Reservation not found or is no longer in the expected status.`);
+  return { reservation: data };
 }
 
 export async function saveOwnerMedicine(userId, form, editingListingId = null) {

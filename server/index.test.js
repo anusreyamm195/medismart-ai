@@ -10,6 +10,7 @@ import {
   userCollectionName,
   userDatabaseName,
 } from "./db/mongo.js";
+import { removeDemoPharmacies } from "./demo-pharmacies.js";
 
 function passwordHash(password) {
   const salt = "test-salt";
@@ -25,9 +26,10 @@ function createTestData() {
       { id: "user-owner", name: "Maya Patel", email: "owner@medlytic.local", passwordHash: passwordHash("Owner123!"), role: "owner", active: true },
     ],
     pharmacies: [
-      { id: "pharmacy-green-cross", ownerId: "user-owner", name: "Green Cross Pharmacy", location: "Indiranagar, Bengaluru", address: "12 100 Feet Road, Indiranagar, Bengaluru", phone: "+91 80 4000 1001", latitude: 12.9719, longitude: 77.6412, status: "approved", rating: 4.8 },
-      { id: "pharmacy-city-care", ownerId: null, name: "City Care Medicals", location: "Koramangala, Bengaluru", address: "80 Feet Road, Koramangala, Bengaluru", phone: "+91 80 4000 1002", latitude: 12.9352, longitude: 77.6245, status: "approved", rating: 4.5 },
-      { id: "pharmacy-wellness", ownerId: null, name: "Wellness Drugstore", location: "Whitefield, Bengaluru", address: "Main Road, Whitefield, Bengaluru", phone: "+91 80 4000 1003", latitude: 12.9698, longitude: 77.75, status: "approved", rating: 4.6 },
+      { id: "pharmacy-test-green-cross", ownerId: "user-owner", name: "Green Cross Pharmacy", location: "Indiranagar, Bengaluru", address: "12 100 Feet Road, Indiranagar, Bengaluru", phone: "+91 80 4000 1001", latitude: 12.9719, longitude: 77.6412, status: "approved", rating: 4.8 },
+      { id: "pharmacy-test-city-care", ownerId: "user-owner", name: "City Care Medicals", location: "Koramangala, Bengaluru", address: "80 Feet Road, Koramangala, Bengaluru", phone: "+91 80 4000 1002", latitude: 12.9352, longitude: 77.6245, status: "approved", rating: 4.5 },
+      { id: "pharmacy-test-wellness", ownerId: "user-owner", name: "Wellness Drugstore", location: "Whitefield, Bengaluru", address: "Main Road, Whitefield, Bengaluru", phone: "+91 80 4000 1003", latitude: 12.9698, longitude: 77.75, status: "approved", rating: 4.6 },
+      { id: "pharmacy-unregistered", ownerId: null, name: "Unregistered Demo Store", location: "Koramangala, Bengaluru", address: "Demo Address", status: "approved", latitude: 12.9351, longitude: 77.6244, rating: 5 },
     ],
     medicines: [
       { id: "med-paracetamol", name: "Dolo 650", genericName: "Paracetamol 650 mg", category: "Pain relief", info: paracetamolInfo },
@@ -38,16 +40,17 @@ function createTestData() {
       { id: "med-omeprazole", name: "Omez 20", genericName: "Omeprazole 20 mg", category: "Digestive health", info: "Omeprazole reduces stomach acid." },
     ],
     listings: [
-      { id: "listing-1", medicineId: "med-paracetamol", pharmacyId: "pharmacy-green-cross", price: 30, stock: 42, ownerId: "user-owner" },
-      { id: "listing-2", medicineId: "med-paracetamol", pharmacyId: "pharmacy-city-care", price: 32, stock: 18 },
-      { id: "listing-3", medicineId: "med-paracetamol", pharmacyId: "pharmacy-wellness", price: 28, stock: 0 },
-      { id: "listing-10", medicineId: "med-calpol", pharmacyId: "pharmacy-green-cross", price: 34, stock: 21, ownerId: "user-owner" },
-      { id: "listing-4", medicineId: "med-ibuprofen", pharmacyId: "pharmacy-green-cross", price: 45, stock: 16, ownerId: "user-owner" },
-      { id: "listing-5", medicineId: "med-ibuprofen", pharmacyId: "pharmacy-city-care", price: 42, stock: 25 },
-      { id: "listing-6", medicineId: "med-cetirizine", pharmacyId: "pharmacy-city-care", price: 22, stock: 31 },
-      { id: "listing-7", medicineId: "med-cetirizine", pharmacyId: "pharmacy-wellness", price: 24, stock: 12 },
-      { id: "listing-8", medicineId: "med-vitamin-c", pharmacyId: "pharmacy-green-cross", price: 18, stock: 60, ownerId: "user-owner" },
-      { id: "listing-9", medicineId: "med-omeprazole", pharmacyId: "pharmacy-wellness", price: 56, stock: 9 },
+      { id: "listing-1", medicineId: "med-paracetamol", pharmacyId: "pharmacy-test-green-cross", price: 30, stock: 42, ownerId: "user-owner" },
+      { id: "listing-2", medicineId: "med-paracetamol", pharmacyId: "pharmacy-test-city-care", price: 32, stock: 18 },
+      { id: "listing-3", medicineId: "med-paracetamol", pharmacyId: "pharmacy-test-wellness", price: 28, stock: 0 },
+      { id: "listing-10", medicineId: "med-calpol", pharmacyId: "pharmacy-test-green-cross", price: 34, stock: 21, ownerId: "user-owner" },
+      { id: "listing-4", medicineId: "med-ibuprofen", pharmacyId: "pharmacy-test-green-cross", price: 45, stock: 16, ownerId: "user-owner" },
+      { id: "listing-5", medicineId: "med-ibuprofen", pharmacyId: "pharmacy-test-city-care", price: 42, stock: 25 },
+      { id: "listing-6", medicineId: "med-cetirizine", pharmacyId: "pharmacy-test-city-care", price: 22, stock: 31 },
+      { id: "listing-7", medicineId: "med-cetirizine", pharmacyId: "pharmacy-test-wellness", price: 24, stock: 12 },
+      { id: "listing-8", medicineId: "med-vitamin-c", pharmacyId: "pharmacy-test-green-cross", price: 18, stock: 60, ownerId: "user-owner" },
+      { id: "listing-9", medicineId: "med-omeprazole", pharmacyId: "pharmacy-test-wellness", price: 56, stock: 9 },
+      { id: "listing-unregistered", medicineId: "med-paracetamol", pharmacyId: "pharmacy-unregistered", price: 1, stock: 50 },
     ],
     history: [],
     savedPharmacies: [],
@@ -170,18 +173,39 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
   const nearbyPharmacies = await api("/pharmacies?latitude=12.935&longitude=77.624");
   assert.equal(nearbyPharmacies.body.pharmacies[0].name, "City Care Medicals");
   assert.ok(nearbyPharmacies.body.pharmacies[0].distanceKm < 1);
+  assert.ok(nearbyPharmacies.body.pharmacies.every((pharmacy) => pharmacy.pharmacyId !== "pharmacy-unregistered"));
+  assert.ok(nearbyPharmacies.body.pharmacies.every((pharmacy) => Boolean(testApi.data.pharmacies.find((item) => item.id === pharmacy.pharmacyId)?.ownerId)));
   const cityResults = await api("/medicines?location=Bengaluru&latitude=12.935&longitude=77.624&radiusKm=50&sort=distance-desc");
   assert.ok(cityResults.body.medicines.length > 0);
   assert.ok(cityResults.body.medicines.every((medicine) => medicine.location.includes("Bengaluru")));
   assert.ok(cityResults.body.medicines[0].distanceKm >= cityResults.body.medicines.at(-1).distanceKm);
-  const nearbyStore = await api("/medicines?location=Different%20city&latitude=12.935&longitude=77.624&radiusKm=50&pharmacyId=pharmacy-green-cross");
+  const nearbyStore = await api("/medicines?location=Different%20city&latitude=12.935&longitude=77.624&radiusKm=50&pharmacyId=pharmacy-test-green-cross");
   assert.ok(nearbyStore.body.medicines.length > 0);
-  assert.ok(nearbyStore.body.medicines.every((medicine) => medicine.pharmacyId === "pharmacy-green-cross"));
+  assert.ok(nearbyStore.body.medicines.every((medicine) => medicine.pharmacyId === "pharmacy-test-green-cross"));
+  assert.ok(nearbyStore.body.medicines.every((medicine) => medicine.pharmacyId !== "pharmacy-unregistered"));
   const withinOneKm = await api("/medicines?latitude=12.9352&longitude=77.6245&radiusKm=1");
   assert.ok(withinOneKm.body.medicines.length > 0);
   assert.ok(withinOneKm.body.medicines.every((medicine) => medicine.pharmacy === "City Care Medicals" && medicine.stock > 0));
   assert.equal((await api("/medicines?latitude=12.9352&longitude=77.6245&radiusKm=0")).status, 400);
   assert.equal((await api("/medicines?latitude=91&longitude=77")).status, 400);
+});
+
+test("demo pharmacies are removed while owner-registered pharmacies are retained", () => {
+  const data = {
+    pharmacies: [
+      { id: "pharmacy-green-cross", ownerId: "user-owner" },
+      { id: "pharmacy-city-care", ownerId: null },
+      { id: "pharmacy-real-registration", ownerId: "user-real-owner" },
+    ],
+    listings: [{ id: "listing-demo", pharmacyId: "pharmacy-green-cross" }, { id: "listing-real", pharmacyId: "pharmacy-real-registration" }],
+    savedPharmacies: [{ pharmacyId: "pharmacy-city-care" }, { pharmacyId: "pharmacy-real-registration" }],
+    ratings: [{ pharmacyId: "pharmacy-green-cross" }, { pharmacyId: "pharmacy-real-registration" }],
+  };
+  assert.equal(removeDemoPharmacies(data), 2);
+  assert.deepEqual(data.pharmacies, [{ id: "pharmacy-real-registration", ownerId: "user-real-owner" }]);
+  assert.deepEqual(data.listings, [{ id: "listing-real", pharmacyId: "pharmacy-real-registration" }]);
+  assert.deepEqual(data.savedPharmacies, [{ pharmacyId: "pharmacy-real-registration" }]);
+  assert.deepEqual(data.ratings, [{ pharmacyId: "pharmacy-real-registration" }]);
 });
 
 test("medicine search accepts multiple comma-separated medicine names", async () => {
@@ -206,10 +230,112 @@ test("patients can reserve an available listing and see search history", async (
   assert.equal(cart.body.reservations[0].medicine, listing.name);
   assert.equal(cart.body.reservations[0].pharmacy, listing.pharmacy);
   assert.equal(cart.body.reservations[0].quantity, 1);
+  const ownerToken = await login("owner@medlytic.local", "Owner123!");
+  const forbiddenRemoval = await api(`/reservations/${reservation.body.reservation.id}`, { token: ownerToken, method: "DELETE" });
+  assert.equal(forbiddenRemoval.status, 403);
+  const removal = await api(`/reservations/${reservation.body.reservation.id}`, { token, method: "DELETE" });
+  assert.equal(removal.status, 200);
+  assert.equal(removal.body.message, "Reservation removed.");
+  const emptyCart = await api("/reservations", { token });
+  assert.equal(emptyCart.status, 200);
+  assert.equal(emptyCart.body.reservations.length, 0);
   testApi.data.listings.push(...applicationStateListings);
   const history = await api("/search-history", { token });
   assert.equal(history.status, 200);
   assert.equal(history.body.history[0].query, "Dolo");
+});
+
+test("owners can mark their pending reservations received but cannot change another pharmacy's reservation", async () => {
+  const patientToken = await login("patient@medlytic.local", "Patient123!");
+  const ownerToken = await login("owner@medlytic.local", "Owner123!");
+  const reservation = await api("/reservations", {
+    token: patientToken,
+    method: "POST",
+    body: JSON.stringify({ listingId: "listing-1", quantity: 1 }),
+  });
+  assert.equal(reservation.status, 201);
+
+  const markedReceived = await api(`/owner/reservations/${reservation.body.reservation.id}`, {
+    token: ownerToken,
+    method: "PATCH",
+    body: JSON.stringify({ status: "received" }),
+  });
+  assert.equal(markedReceived.status, 200);
+  assert.equal(markedReceived.body.reservation.status, "received");
+
+  const duplicateUpdate = await api(`/owner/reservations/${reservation.body.reservation.id}`, {
+    token: ownerToken,
+    method: "PATCH",
+    body: JSON.stringify({ status: "received" }),
+  });
+  assert.equal(duplicateUpdate.status, 409);
+  const invalidTransition = await api(`/owner/reservations/${reservation.body.reservation.id}`, {
+    token: ownerToken,
+    method: "PATCH",
+    body: JSON.stringify({ status: "cancelled" }),
+  });
+  assert.equal(invalidTransition.status, 400);
+  const markedPending = await api(`/owner/reservations/${reservation.body.reservation.id}`, {
+    token: ownerToken,
+    method: "PATCH",
+    body: JSON.stringify({ status: "pending" }),
+  });
+  assert.equal(markedPending.status, 200);
+  assert.equal(markedPending.body.reservation.status, "pending");
+  const refreshedDashboard = await api("/owner/dashboard", { token: ownerToken });
+  assert.equal(
+    refreshedDashboard.body.reservations.find((item) => item.id === reservation.body.reservation.id).status,
+    "pending",
+  );
+  const markedReceivedAgain = await api(`/owner/reservations/${reservation.body.reservation.id}`, {
+    token: ownerToken,
+    method: "PATCH",
+    body: JSON.stringify({ status: "received" }),
+  });
+  assert.equal(markedReceivedAgain.status, 200);
+  assert.equal(markedReceivedAgain.body.reservation.status, "received");
+  const patientUpdate = await api(`/owner/reservations/${reservation.body.reservation.id}`, {
+    token: patientToken,
+    method: "PATCH",
+    body: JSON.stringify({ status: "received" }),
+  });
+  assert.equal(patientUpdate.status, 403);
+
+  const otherOwner = await api("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Another Owner",
+      email: "another-owner@example.com",
+      password: "StrongPass123",
+      role: "owner",
+      pharmacyName: "Another Pharmacy",
+      location: "Jayanagar",
+      latitude: 12.925,
+      longitude: 77.583,
+    }),
+  });
+  assert.equal(otherOwner.status, 201);
+  const otherPharmacy = testApi.data.pharmacies.find((pharmacy) => pharmacy.ownerId === otherOwner.body.user.id);
+  otherPharmacy.status = "approved";
+  await api("/owner/medicines", {
+    token: otherOwner.body.token,
+    method: "POST",
+    body: JSON.stringify({ name: "Other owner's medicine", genericName: "Test", category: "Test", price: 10, stock: 4 }),
+  });
+  const otherDashboard = await api("/owner/dashboard", { token: otherOwner.body.token });
+  const otherListing = otherDashboard.body.listings.find((listing) => listing.name === "Other owner's medicine");
+  const otherReservation = await api("/reservations", {
+    token: patientToken,
+    method: "POST",
+    body: JSON.stringify({ listingId: otherListing.id, quantity: 1 }),
+  });
+  assert.equal(otherReservation.status, 201);
+  const forbiddenUpdate = await api(`/owner/reservations/${otherReservation.body.reservation.id}`, {
+    token: ownerToken,
+    method: "PATCH",
+    body: JSON.stringify({ status: "received" }),
+  });
+  assert.equal(forbiddenUpdate.status, 404);
 });
 
 test("owners can update only their inventory, while admins can approve store signups", async () => {
@@ -230,6 +356,10 @@ test("owners can update only their inventory, while admins can approve store sig
   const newListing = refreshed.body.listings.find((item) => item.name === "Demo medicine");
   assert.equal(newListing.stock, 4);
   assert.equal(newListing.price, 19.5);
+  const deleted = await api(`/owner/medicines/${newListing.id}`, { token: ownerToken, method: "DELETE" });
+  assert.equal(deleted.status, 200);
+  const afterDelete = await api("/owner/dashboard", { token: ownerToken });
+  assert.equal(afterDelete.body.listings.some((item) => item.id === newListing.id), false);
   const forbidden = await api("/admin/dashboard", { token: ownerToken });
   assert.equal(forbidden.status, 403);
 
@@ -466,6 +596,38 @@ test("patients can save and rate pharmacies, then admins can resolve reports", a
   const saved = await api("/saved-pharmacies", { token: patientToken, method: "POST", body: JSON.stringify({ pharmacyId: listing.pharmacyId }) });
   assert.equal(saved.status, 201);
   assert.equal((await api("/saved-pharmacies", { token: patientToken })).body.pharmacies.length, 1);
+  const removed = await api(`/saved-pharmacies/${listing.pharmacyId}`, { token: patientToken, method: "DELETE" });
+  assert.equal(removed.status, 200);
+  assert.equal((await api("/saved-pharmacies", { token: patientToken })).body.pharmacies.length, 0);
+  const resaved = await api("/saved-pharmacies", { token: patientToken, method: "POST", body: JSON.stringify({ pharmacyId: listing.pharmacyId }) });
+  assert.equal(resaved.status, 201);
+  assert.equal((await api("/saved-pharmacies", { token: patientToken })).body.pharmacies.length, 1);
+
+  const liked = await api("/liked-medicines", { token: patientToken, method: "POST", body: JSON.stringify({ medicineId: listing.medicineId }) });
+  assert.equal(liked.status, 201);
+  const duplicateLike = await api("/liked-medicines", { token: patientToken, method: "POST", body: JSON.stringify({ medicineId: listing.medicineId }) });
+  assert.equal(duplicateLike.status, 201);
+  const likedItems = await api("/liked-medicines", { token: patientToken });
+  assert.equal(likedItems.status, 200);
+  assert.equal(likedItems.body.medicines.length, 1);
+  assert.equal(likedItems.body.medicines[0].id, listing.medicineId);
+  assert.equal(likedItems.body.medicines[0].name, listing.name);
+  assert.ok(Number.isFinite(likedItems.body.medicines[0].price));
+  assert.ok(likedItems.body.medicines[0].pharmacyId);
+  assert.equal((await api("/liked-medicines")).status, 401);
+
+  const otherPatient = await api("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name: "Other patient", email: "other-patient@example.com", password: "StrongPass123" }),
+  });
+  assert.equal(otherPatient.status, 201);
+  assert.equal((await api("/liked-medicines", { token: otherPatient.body.token })).body.medicines.length, 0);
+  const unlike = await api(`/liked-medicines/${listing.medicineId}`, { token: patientToken, method: "DELETE" });
+  assert.equal(unlike.status, 200);
+  assert.equal((await api("/liked-medicines", { token: patientToken })).body.medicines.length, 0);
+  const invalidLike = await api("/liked-medicines", { token: patientToken, method: "POST", body: JSON.stringify({ medicineId: "missing-medicine" }) });
+  assert.equal(invalidLike.status, 404);
+
   const rating = await api(`/pharmacies/${listing.pharmacyId}/ratings`, { token: patientToken, method: "POST", body: JSON.stringify({ rating: 4 }) });
   assert.equal(rating.status, 201);
 

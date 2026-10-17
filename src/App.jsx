@@ -13,16 +13,23 @@ import {
   updateProfile,
   getSearchHistory,
   getSavedPharmacies,
+  getLikedMedicines,
+  likeMedicine as apiLikeMedicine,
+  unlikeMedicine as apiUnlikeMedicine,
   getNearbyPharmacies,
   getApprovedPharmacies,
   getUserReservations,
+  removeUserReservation,
   savePharmacy as apiSavePharmacy,
+  removeSavedPharmacy as apiRemoveSavedPharmacy,
   ratePharmacy as apiRatePharmacy,
   reserveMedicine as apiReserveMedicine,
   submitReport as apiSubmitReport,
   getOwnerDashboard,
   saveOwnerMedicine,
+  deleteOwnerMedicine,
   updateOwnerStock,
+  updateOwnerReservationStatus,
   updateOwnerPharmacyProfile,
   getAdminDashboard,
   getAdminRecords,
@@ -78,6 +85,28 @@ async function geocodeLocation(location) {
   return { latitude, longitude };
 }
 
+function pharmacyIdentity(pharmacy) {
+  const normalize = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const identity = [
+    normalize(pharmacy.name || pharmacy.pharmacy),
+    normalize(pharmacy.location),
+    normalize(pharmacy.address),
+  ];
+  return identity.some(Boolean) ? identity.join("|") : pharmacy.id || pharmacy.pharmacyId;
+}
+
+function pharmacyDirectionsUrl(pharmacy, origin) {
+  const hasCoordinates = pharmacy.latitude !== null && pharmacy.latitude !== undefined
+    && pharmacy.longitude !== null && pharmacy.longitude !== undefined
+    && Number.isFinite(Number(pharmacy.latitude)) && Number.isFinite(Number(pharmacy.longitude));
+  const destination = hasCoordinates
+    ? `${pharmacy.latitude},${pharmacy.longitude}`
+    : pharmacy.address || pharmacy.location;
+  const params = new URLSearchParams({ api: "1", destination });
+  if (origin) params.set("origin", `${origin.latitude},${origin.longitude}`);
+  return `https://www.google.com/maps/dir/?${params}`;
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("home");
@@ -113,20 +142,93 @@ function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
   const [detail, setDetail] = useState(null);
+  const [pharmacyDetail, setPharmacyDetail] = useState(null);
   const [history, setHistory] = useState([]);
   const [saved, setSaved] = useState([]);
+  const [likedMedicines, setLikedMedicines] = useState([]);
+  const [savedDataLoading, setSavedDataLoading] = useState(false);
+  const [savedDataError, setSavedDataError] = useState("");
+  const [savedDataOwnerId, setSavedDataOwnerId] = useState(null);
+  const [savedDataRefresh, setSavedDataRefresh] = useState(0);
+  const [savingPharmacyId, setSavingPharmacyId] = useState(null);
+  const [savingMedicineId, setSavingMedicineId] = useState(null);
   const [reservations, setReservations] = useState([]);
   const [reservationsLoadedFor, setReservationsLoadedFor] = useState(null);
   const [reservationCartOpen, setReservationCartOpen] = useState(false);
+  const [removingReservationId, setRemovingReservationId] = useState(null);
   const [pendingReservation, setPendingReservation] = useState(null);
   const [reservingListingId, setReservingListingId] = useState(null);
   const [profileData, setProfileData] = useState(null);
   const [ownerData, setOwnerData] = useState(null);
+  const [updatingReservationId, setUpdatingReservationId] = useState(null);
   const [adminData, setAdminData] = useState(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [reportTarget, setReportTarget] = useState(null);
   const reservationUserId = user?.role === "patient" ? user.id : null;
   const reservationsLoading = Boolean(reservationUserId && reservationsLoadedFor !== reservationUserId);
+
+  const updateReservationStatus = async (reservationId, status) => {
+    setUpdatingReservationId(reservationId);
+    try {
+      await updateOwnerReservationStatus(user.id, reservationId, status);
+      setOwnerData((current) => current ? {
+        ...current,
+        reservations: current.reservations.map((reservation) =>
+          reservation.id === reservationId ? { ...reservation, status } : reservation
+        ),
+      } : current);
+      setNotice(`Reservation marked as ${status}.`);
+      setRefreshVersion((version) => version + 1);
+    } catch (err) {
+      setError(err.message || "Failed to update reservation.");
+    } finally {
+      setUpdatingReservationId(null);
+    }
+  };
+
+  const toggleLikedMedicine = async (medicine, isLiked) => {
+    if (!user) {
+      setAuthMode("login");
+      setAuthError("");
+      setAuthOpen(true);
+      return;
+    }
+    if (user.role !== "patient") {
+      setError("Liked medicines are available with a patient account.");
+      return;
+    }
+    const medicineId = medicine.medicineId || medicine.id;
+    if (savingMedicineId) return;
+    setSavingMedicineId(medicineId);
+    try {
+      const result = isLiked
+        ? await apiUnlikeMedicine(user.id, medicineId)
+        : await apiLikeMedicine(user.id, medicineId);
+      setLikedMedicines((current) => isLiked
+        ? current.filter((item) => item.id !== medicineId)
+        : current.some((item) => item.id === medicineId) ? current : [{
+          id: medicineId,
+          medicineId,
+          name: medicine.name,
+          genericName: medicine.genericName || "",
+          category: medicine.category || "",
+          info: medicine.info || "",
+          listingId: medicine.id !== medicineId ? medicine.id : null,
+          price: Number.isFinite(Number(medicine.price)) ? Number(medicine.price) : null,
+          stock: Number(medicine.stock) || 0,
+          pharmacyId: medicine.pharmacyId || null,
+          pharmacy: medicine.pharmacy || "No approved pharmacy listing",
+          location: medicine.location || "",
+          address: medicine.address || "",
+          createdAt: new Date().toISOString(),
+        }, ...current]);
+      setNotice(result.message);
+    } catch (err) {
+      setError(err.message || (isLiked ? "Failed to unlike medicine." : "Failed to like medicine."));
+    } finally {
+      setSavingMedicineId(null);
+    }
+  };
 
   const completeReservation = useCallback(async (listing, userId) => {
     setReservingListingId(listing.id);
@@ -186,6 +288,21 @@ function App() {
       return;
     }
     await completeReservation(pendingReservation, authenticatedUser.id);
+  };
+
+  const removeReservation = async (reservation) => {
+    if (!user || removingReservationId) return;
+    setRemovingReservationId(reservation.id);
+    setError("");
+    try {
+      const result = await removeUserReservation(user.id, reservation.id);
+      setReservations((current) => current.filter((item) => item.id !== reservation.id));
+      setNotice(result.message || "Reservation removed.");
+    } catch (err) {
+      setError(err.message || "Failed to remove reservation.");
+    } finally {
+      setRemovingReservationId(null);
+    }
   };
 
   const selectRegistrationLocation = async (coordinates) => {
@@ -266,16 +383,36 @@ function App() {
       });
   }, []);
 
+  useEffect(() => {
+    if (user?.role !== "patient") return undefined;
+    let active = true;
+    const loadSavedItems = async () => {
+      setSavedDataLoading(true);
+      setSavedDataError("");
+      const [pharmaciesResult, medicinesResult] = await Promise.allSettled([
+        getSavedPharmacies(user.id),
+        getLikedMedicines(user.id),
+      ]);
+      if (!active) return;
+      if (pharmaciesResult.status === "fulfilled") setSaved(pharmaciesResult.value);
+      if (medicinesResult.status === "fulfilled") setLikedMedicines(medicinesResult.value);
+      const errors = [pharmaciesResult, medicinesResult]
+        .filter((result) => result.status === "rejected")
+        .map((result) => result.reason?.message || "Saved items could not be loaded.");
+      setSavedDataError(errors.join(" "));
+      setSavedDataOwnerId(user.id);
+      setSavedDataLoading(false);
+    };
+    loadSavedItems();
+    return () => { active = false; };
+  }, [user?.id, user?.role, savedDataRefresh]);
+
   // View data fetching based on current authenticated state & view
   useEffect(() => {
     if (!user) return;
     if (view === "history") {
       getSearchHistory(user.id)
         .then((items) => setHistory(items))
-        .catch((err) => setError(err.message));
-    } else if (view === "saved") {
-      getSavedPharmacies(user.id)
-        .then((items) => setSaved(items))
         .catch((err) => setError(err.message));
     } else if (view === "profile") {
       getProfile(user.id)
@@ -318,7 +455,9 @@ function App() {
     await search(query, location, userCoordinates, radiusKm, userCoordinates ? sort : "price-asc");
   };
 
-  const visiblePharmacyOptions = pharmacyOptions.filter((pharmacy) => {
+  const uniquePharmacyOptions = [...new Map(pharmacyOptions.map((pharmacy) => [pharmacyIdentity(pharmacy), pharmacy])).values()];
+  const uniqueSavedPharmacies = [...new Map(saved.map((pharmacy) => [pharmacyIdentity(pharmacy), pharmacy])).values()];
+  const visiblePharmacyOptions = uniquePharmacyOptions.filter((pharmacy) => {
     const searchTerm = pharmacyQuery.trim().toLowerCase();
     return !searchTerm || `${pharmacy.name} ${pharmacy.location || ""}`.toLowerCase().includes(searchTerm);
   });
@@ -423,6 +562,8 @@ function App() {
           email: payload.email,
           password: payload.password,
         });
+        setSaved([]);
+        setLikedMedicines([]);
         setUser(data.user);
         setView(data.user.role === "owner" ? "owner-dashboard" : "home");
         setAuthOpen(false);
@@ -447,6 +588,8 @@ function App() {
           setNotice(data.message);
           setAuthOpen(false);
         } else {
+          setSaved([]);
+          setLikedMedicines([]);
           setUser(data.user);
           setView(data.user?.role === "owner" ? "owner-dashboard" : "home");
           setAuthOpen(false);
@@ -469,6 +612,8 @@ function App() {
       // Ignored
     }
     setUser(null);
+    setSaved([]);
+    setLikedMedicines([]);
     setReservations([]);
     setReservationsLoadedFor(null);
     setReservationCartOpen(false);
@@ -500,17 +645,31 @@ function App() {
     await completeReservation(listing, user.id);
   };
 
-  const savePharmacy = async (pharmacyId) => {
+  const toggleSavedPharmacy = async (pharmacy, isSaved) => {
     if (!user) {
       setAuthMode("login");
       setAuthOpen(true);
       return;
     }
+    if (user.role !== "patient") {
+      setError("Saved stores are available with a patient account.");
+      return;
+    }
+    if (savingPharmacyId) return;
+    const pharmacyId = pharmacy.id;
+    setSavingPharmacyId(pharmacyId);
     try {
-      const data = await apiSavePharmacy(user.id, pharmacyId);
+      const data = isSaved
+        ? await apiRemoveSavedPharmacy(user.id, pharmacyId)
+        : await apiSavePharmacy(user.id, pharmacyId);
+      setSaved((current) => isSaved
+        ? current.filter((item) => item.id !== pharmacyId)
+        : current.some((item) => item.id === pharmacyId) ? current : [...current, pharmacy]);
       setNotice(data.message);
     } catch (err) {
-      setError(err.message || "Failed to save pharmacy.");
+      setError(err.message || (isSaved ? "Failed to remove saved pharmacy." : "Failed to save pharmacy."));
+    } finally {
+      setSavingPharmacyId(null);
     }
   };
 
@@ -675,9 +834,9 @@ function App() {
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
 
-            {nearbySearchActive && <NearbyPharmacies pharmacies={nearbyPharmacies} location={nearbySearchLocation} coordinates={userCoordinates} />}
+            {nearbySearchActive && <NearbyPharmacies pharmacies={nearbyPharmacies} location={nearbySearchLocation} onDetails={setPharmacyDetail} />}
             {registeredMedicines.length ? <div className="medicine-grid">{registeredMedicines.map((medicine) =>
-              <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} reserving={reservingListingId === medicine.id} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={(rating) => ratePharmacy(medicine.pharmacyId, rating)} />)}</div>
+              <MedicineCard key={medicine.id} medicine={medicine} reserving={reservingListingId === medicine.id} savingPharmacy={savingPharmacyId === medicine.pharmacyId} savedPharmacy={saved.some((pharmacy) => pharmacy.id === medicine.pharmacyId)} savingMedicine={savingMedicineId === medicine.medicineId} liked={likedMedicines.some((item) => item.id === medicine.medicineId)} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onTogglePharmacy={(isSaved) => toggleSavedPharmacy({ id: medicine.pharmacyId, name: medicine.pharmacy, location: medicine.location, address: medicine.address, phone: medicine.phone, latitude: medicine.latitude, longitude: medicine.longitude, rating: medicine.rating }, isSaved)} onToggleLike={(isLiked) => toggleLikedMedicine(medicine, isLiked)} onRate={(rating) => ratePharmacy(medicine.pharmacyId, rating)} />)}</div>
               : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
           </section>
           <section className="how-section">
@@ -686,10 +845,10 @@ function App() {
           </section>
         </>}
         {view === "history" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Recent medicine searches" sub="Pick up where you left off." />{history.length ? <div className="history-list">{history.map((item) => <button key={item.id} onClick={() => { setQuery(item.query); search(item.query); }}><span className="history-icon">⌕</span><span><b>{item.query}</b><small>{new Date(item.createdAt).toLocaleString()}</small></span><span className="history-arrow">↗</span></button>)}</div> : <EmptyDashboard text="Your searches will appear here after you look up a medicine." />}</section>}
-        {view === "saved" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Saved pharmacies" sub="Keep trusted local stores close at hand." />{saved.length ? <div className="medicine-grid">{saved.map((pharmacy) => <PharmacyCard key={pharmacy.id} pharmacy={pharmacy} />)}</div> : <EmptyDashboard text="Save a pharmacy from any medicine result to see it here." />}</section>}
+        {view === "saved" && <SavedPage likedMedicines={likedMedicines} pharmacies={uniqueSavedPharmacies} loading={savedDataLoading || savedDataOwnerId !== user?.id} error={savedDataError} busyMedicineId={savingMedicineId} busyPharmacyId={savingPharmacyId} onRetry={() => setSavedDataRefresh((version) => version + 1)} onFindMedicines={() => setView("home")} onUnlike={(medicine) => toggleLikedMedicine(medicine, true)} onUnsave={(pharmacy) => toggleSavedPharmacy(pharmacy, true)} onMedicineDetails={openMedicine} onPharmacyDetails={setPharmacyDetail} />}
         {view === "profile" && <ProfilePanel key={profileData?.name || ""} profile={profileData} user={user} onChange={setUser} onError={setError} onNotice={setNotice} />}
-        {view === "owner-dashboard" && <OwnerOverview data={ownerData} onOpenStore={() => setView("owner")} />}
-        {view === "owner" && <OwnerDashboard data={ownerData} user={user} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
+        {view === "owner-dashboard" && <OwnerOverview data={ownerData} ownerName={user?.name} onOpenStore={() => setView("owner")} onUpdateReservationStatus={updateReservationStatus} updatingReservationId={updatingReservationId} />}
+        {view === "owner" && <OwnerDashboard data={ownerData} user={user} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} onUpdateReservationStatus={updateReservationStatus} updatingReservationId={updatingReservationId} />}
         {view === "admin" && <AdminDashboard data={adminData} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
       </main>
 
@@ -709,12 +868,16 @@ function App() {
               <button className="reservation-cart-close" type="button" onClick={() => setReservationCartOpen(false)} aria-label="Close reservations cart">×</button>
             </header>
             <div className="reservation-cart-body">
+              {error && <div className="alert alert-error" role="alert">{error}<button type="button" onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
               {reservationsLoading ? <p className="reservation-cart-message">Loading your reservations…</p>
                 : reservations.length ? reservations.map((item) => <article className="reservation-cart-item" key={item.id}>
                   <div className="reservation-cart-medicine"><span aria-hidden="true">✚</span><div><b>{item.medicine}</b>{item.genericName && <small>{item.genericName}</small>}</div></div>
                   <p className="reservation-cart-pharmacy">{item.pharmacy}{item.location ? ` · ${item.location}` : ""}</p>
                   <div className="reservation-cart-item-meta"><span>Qty <b>{item.quantity}</b></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>
-                  {item.createdAt && <small className="reservation-cart-date">{new Date(item.createdAt).toLocaleDateString()}</small>}
+                  <div className="reservation-cart-item-footer">
+                    {item.createdAt && <small className="reservation-cart-date">{new Date(item.createdAt).toLocaleDateString()}</small>}
+                    <button className="reservation-remove-button" type="button" disabled={removingReservationId !== null} onClick={() => removeReservation(item)}>{removingReservationId === item.id ? "Removing…" : "Remove"}</button>
+                  </div>
                 </article>) : <div className="reservation-cart-empty"><span aria-hidden="true">▣</span><h3>No reservations yet</h3><p>Reserve an in-stock medicine and it will appear here.</p><button type="button" className="button button-primary button-small" onClick={() => { setReservationCartOpen(false); setView("home"); }}>Find medicines</button></div>}
             </div>
             {!!reservations.length && <footer className="reservation-cart-footer"><span>{reservations.length} {reservations.length === 1 ? "request" : "requests"} · {reservations.reduce((total, item) => total + Number(item.quantity || 0), 0)} items</span><button type="button" className="button button-outline button-small" onClick={() => setReservationCartOpen(false)}>Continue browsing</button></footer>}
@@ -853,13 +1016,46 @@ function App() {
         </Modal>
       )}
 
-      {detail && <Modal title={detail.medicine.name} onClose={() => setDetail(null)}>
-        <div className="detail-generic">{detail.medicine.genericName} · {detail.medicine.category}</div>
-        <div className="detail-info"><h3>About this medicine</h3><p>{detail.medicine.info || "Ask a pharmacist or clinician for medicine-specific guidance."}</p><div className="medical-disclaimer">General information only — not a diagnosis or treatment recommendation. Do not start, stop, or change medication without advice from a qualified health professional.</div></div>
-        <MedicineChatbot medicine={detail.medicine} alternatives={detail.alternatives} />
-        <div className="alternatives"><h3>Similar options to discuss with a pharmacist</h3><p>{detail.alternatives.length ? detail.alternatives.join(", ") : "No alternatives are listed in the local catalogue."}</p><small>Similar active ingredient does not mean medicines are interchangeable. Confirm suitability with a clinician or pharmacist.</small></div>
-        <h3 className="availability-heading">Available listings</h3>{detail.listings.map((listing) => <div className="listing-line" key={listing.id}><span><b>{listing.pharmacy}</b><small>{listing.location} · ★ {listing.rating}</small></span><strong>₹{listing.price.toFixed(2)}</strong></div>)}
-        {user?.role === "patient" && <button className="text-button report-link" onClick={() => { setReportTarget({ name: detail.medicine.name }); setDetail(null); }}>Report incorrect information</button>}
+      {detail && <Modal className="medicine-detail-modal" title={detail.medicine.name} onClose={() => setDetail(null)}>
+        <div className="medicine-detail-content">
+          <header className="medicine-detail-identity">
+            <span className="medicine-detail-icon" aria-hidden="true">✚</span>
+            <div><span className="eyebrow">MEDICINE DETAILS</span><p className="detail-generic">{detail.medicine.genericName || "Generic name not listed"}{detail.medicine.category ? ` · ${detail.medicine.category}` : ""}</p></div>
+          </header>
+          <section className="detail-info">
+            <h3>About this medicine</h3>
+            <p>{detail.medicine.info || "Ask a pharmacist or clinician for medicine-specific guidance."}</p>
+            <div className="medical-disclaimer"><span aria-hidden="true">!</span><p>General information only — not a diagnosis or treatment recommendation. Do not start, stop, or change medication without advice from a qualified health professional.</p></div>
+          </section>
+          <MedicineChatbot medicine={detail.medicine} alternatives={detail.alternatives} />
+          <section className="alternatives">
+            <div><h3>Similar medicines</h3><p>{detail.alternatives.length ? detail.alternatives.map((alternative) => <span className="medicine-alternative-chip" key={alternative}>{alternative}</span>) : <span className="medicine-no-alternatives">No similar medicines are listed in the catalogue.</span>}</p></div>
+            <small>Similar active ingredients do not mean medicines are interchangeable. Ask a pharmacist or clinician before switching.</small>
+          </section>
+          <section className="medicine-listings-section">
+            <header className="medicine-listings-heading"><div><h3>Available pharmacies</h3><p>Prices and stock reported by registered pharmacies.</p></div><span>{detail.listings.length} {detail.listings.length === 1 ? "store" : "stores"}</span></header>
+            {detail.listings.length ? <div className="medicine-listings">{detail.listings.map((listing) => {
+              const stock = Number(listing.stock);
+              const stockStatus = stock <= 0 ? "out" : stock <= 5 ? "low" : "in";
+              return <article className="medicine-listing-card" key={listing.id}>
+                <div className="medicine-listing-main"><span className="medicine-listing-store-icon" aria-hidden="true">⌂</span><div className="medicine-listing-store"><b>{listing.pharmacy || "Pharmacy"}</b><small>{listing.location || "Location not provided"}{listing.address && listing.address !== listing.location ? ` · ${listing.address}` : ""}</small><span className={`medicine-listing-stock ${stockStatus}`}>{stockStatus === "out" ? "Out of stock" : stockStatus === "low" ? `Low stock · ${stock} left` : `In stock · ${stock} available`}</span></div></div>
+                <div className="medicine-listing-actions"><strong>₹{Number(listing.price).toFixed(2)}</strong><a className="button button-outline button-small listing-directions" href={pharmacyDirectionsUrl(listing, userCoordinates)} target="_blank" rel="noreferrer">Directions <span aria-hidden="true">↗</span></a></div>
+              </article>;
+            })}</div> : <div className="medicine-listings-empty">No registered pharmacies currently list this medicine.</div>}
+          </section>
+          {user?.role === "patient" && <button className="text-button report-link" onClick={() => { setReportTarget({ name: detail.medicine.name }); setDetail(null); }}>Report incorrect information <span aria-hidden="true">↗</span></button>}
+        </div>
+      </Modal>}
+
+      {pharmacyDetail && <Modal title={pharmacyDetail.name || pharmacyDetail.pharmacy || "Pharmacy details"} onClose={() => setPharmacyDetail(null)}>
+        <div className="pharmacy-detail-summary">
+          <span className="eyebrow">PHARMACY DETAILS</span>
+          <p>{pharmacyDetail.location || "Location not provided"}</p>
+          {pharmacyDetail.address && pharmacyDetail.address !== pharmacyDetail.location && <p>{pharmacyDetail.address}</p>}
+          {pharmacyDetail.phone && pharmacyDetail.phone !== "Not provided" && <p><a href={`tel:${pharmacyDetail.phone}`}>{pharmacyDetail.phone}</a></p>}
+          <p className="rating">★ {pharmacyDetail.rating || "New"}{Number.isFinite(pharmacyDetail.distanceKm) ? ` · ${pharmacyDetail.distanceKm.toFixed(1)} km away` : ""}</p>
+        </div>
+        <a className="button button-primary pharmacy-detail-directions" href={pharmacyDirectionsUrl(pharmacyDetail, userCoordinates)} target="_blank" rel="noreferrer">Get directions ↗</a>
       </Modal>}
 
       {reportTarget && <Modal title="Report information" onClose={() => setReportTarget(null)}><p className="modal-intro">Help us keep medicine and pharmacy information accurate. Reports are reviewed by the platform team.</p><form className="stack-form" onSubmit={submitReport}><label>Report type<select name="type"><option value="incorrect_price">Incorrect price</option><option value="incorrect_stock">Incorrect availability</option><option value="medicine_information">Medicine information</option><option value="complaint">Complaint</option></select></label><label>What should we review?<textarea name="details" required minLength="5" maxLength="1000" rows="4" /></label>{error && <div className="alert alert-error">{error}</div>}<button className="button button-primary button-full" type="submit">Send report</button></form></Modal>}
@@ -867,9 +1063,16 @@ function App() {
   );
 }
 
-function OwnerOverview({ data, onOpenStore }) {
+function OwnerOverview({ data, onOpenStore, ownerName, onUpdateReservationStatus, updatingReservationId }) {
   const listings = data?.listings || [];
-  const reservations = data?.reservations || [];
+  const reservations = [...(data?.reservations || [])].sort((first, second) =>
+    new Date(second.createdAt || 0).getTime() - new Date(first.createdAt || 0).getTime()
+  );
+  const recentReservations = reservations.slice(0, 5);
+  const lowStockListings = listings
+    .filter((listing) => Number(listing.stock) > 0 && Number(listing.stock) <= 5)
+    .sort((first, second) => Number(first.stock) - Number(second.stock))
+    .slice(0, 5);
   const counts = listings.reduce((result, listing) => {
     const stock = Number(listing.stock);
     result.total += 1;
@@ -885,34 +1088,127 @@ function OwnerOverview({ data, onOpenStore }) {
     return result;
   }, { pending: 0, ready: 0 });
 
-  return <section className="content-section dashboard-section">
-    <SectionTitle eyebrow="PHARMACY PORTAL" title="Owner dashboard" sub={data?.pharmacy?.name ? `A live overview of ${data.pharmacy.name}.` : "A live overview of your pharmacy inventory and customer reservations."} />
-    <div className="metric-grid owner-overview-grid">
-      <Metric label="Total medicine listings" value={counts.total} />
-      <Metric label="Available medicines" value={counts.available} />
-      <Metric label="Low-stock medicines" value={counts.low} />
-      <Metric label="Out-of-stock medicines" value={counts.out} />
-      <Metric label="Pending reservations" value={reservationCounts.pending} />
-      <Metric label="Reservations ready for pickup" value={reservationCounts.ready} />
+  const metrics = [
+    ["▧", "Total medicine listings", counts.total, "total"],
+    ["✚", "Available medicines", counts.available, "available"],
+    ["△", "Low-stock medicines", counts.low, "low"],
+    ["▣", "Out-of-stock medicines", counts.out, "out"],
+    ["▤", "Pending reservations", reservationCounts.pending, "pending"],
+    ["↗", "Reservations ready for pickup", reservationCounts.ready, "ready"],
+  ];
+
+  const formatDate = (value) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? "—"
+      : date.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  };
+  const reservationStatus = (status) => String(status || "pending").toLowerCase().replace(/[\s-]+/g, "_");
+
+  return <section className="content-section dashboard-section owner-overview">
+    <div className="owner-overview-welcome">
+      <div>
+        <span className="eyebrow">PHARMACY PORTAL</span>
+        <h2>Owner dashboard</h2>
+        <p>{data?.pharmacy?.name ? `A live overview of ${data.pharmacy.name}.` : "Your pharmacy overview and customer activity."}</p>
+      </div>
+      <div className="owner-overview-account"><span>{(ownerName || "O").slice(0, 1).toUpperCase()}</span><b>{ownerName || "Store owner"}</b></div>
     </div>
-    <div className="panel owner-overview-note"><h3>Manage your pharmacy</h3><p className="muted-copy">Open Store dashboard to add medicines, update stock, and review customer requests.</p><button className="button button-primary button-small" type="button" onClick={onOpenStore}>Open Store dashboard</button></div>
+
+    <div className="owner-overview-metrics">
+      {metrics.map(([icon, label, value, tone]) => <article className={`owner-overview-metric ${tone}`} key={label}>
+        <span className="owner-overview-metric-icon" aria-hidden="true">{icon}</span>
+        <span className="owner-overview-metric-copy"><small>{label}</small><strong>{value}</strong></span>
+      </article>)}
+    </div>
+
+    <section className="owner-overview-panel owner-reservations-panel">
+      <header className="owner-overview-panel-heading">
+        <div><span className="owner-overview-panel-icon" aria-hidden="true">▤</span><span><h3>Reservation management</h3><p>Recent customer requests for your listed medicines.</p></span></div>
+        <button className="button button-primary button-small" type="button" onClick={onOpenStore}>View all reservations <span aria-hidden="true">→</span></button>
+      </header>
+      {recentReservations.length ? <div className="owner-overview-table-wrap">
+        <table className="owner-overview-table">
+          <thead><tr><th>Reservation</th><th>Customer</th><th>Medicine</th><th>Quantity</th><th>Request date</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody>{recentReservations.map((reservation, index) => <tr key={reservation.id}>
+            <td><span className="owner-reservation-number">{String(index + 1).padStart(2, "0")}</span><span className="owner-reservation-id">{reservation.id}</span></td>
+            <td>{reservation.customer || "Customer"}</td>
+            <td>{reservation.medicine || "Medicine"}</td>
+            <td>{reservation.quantity} {Number(reservation.quantity) === 1 ? "item" : "items"}</td>
+            <td>{formatDate(reservation.createdAt)}</td>
+            <td><span className={`status-tag ${reservationStatus(reservation.status)}`}>{String(reservation.status || "pending").replace(/[_-]+/g, " ")}</span></td>
+            <td>{["pending", "received"].includes(reservationStatus(reservation.status)) && <button className="owner-mark-received" type="button" onClick={() => onUpdateReservationStatus(reservation.id, reservationStatus(reservation.status) === "pending" ? "received" : "pending")} disabled={updatingReservationId === reservation.id}>{updatingReservationId === reservation.id ? "Updating…" : reservationStatus(reservation.status) === "pending" ? "Mark received" : "Mark pending"}</button>}</td>
+          </tr>)}</tbody>
+        </table>
+      </div> : <div className="owner-overview-empty"><span aria-hidden="true">▤</span><b>No reservations yet</b><p>Customer requests will appear here when someone reserves a listed medicine.</p></div>}
+    </section>
+
+    <section className="owner-overview-activity">
+      <header className="owner-overview-section-heading"><div><span className="owner-overview-panel-icon" aria-hidden="true">▥</span><span><h3>Inventory & activity</h3><p>Live inventory signals and recent customer requests.</p></span><button className="button button-outline button-small" type="button" onClick={onOpenStore}>Open store dashboard →</button></div></header>
+      <div className="owner-overview-activity-grid">
+        <article className="owner-overview-panel">
+          <header className="owner-overview-subheading"><div><span className="owner-overview-small-icon low" aria-hidden="true">△</span><span><h4>Low-stock medicines</h4><p>Listings with five or fewer packs remaining.</p></span></div><span className="owner-overview-count">{counts.low}</span></header>
+          {lowStockListings.length ? <ul className="owner-overview-stock-list">{lowStockListings.map((listing) => <li key={listing.id}>
+            <span><b>{listing.name}</b><small>{listing.genericName || listing.category}</small></span>
+            <strong>{listing.stock} left</strong>
+          </li>)}</ul> : <div className="owner-overview-compact-empty">{listings.length ? "No medicines need restocking right now." : "Add medicines to see inventory status here."}</div>}
+        </article>
+
+        <article className="owner-overview-panel">
+          <header className="owner-overview-subheading"><div><span className="owner-overview-small-icon recent" aria-hidden="true">◷</span><span><h4>Recent activity</h4><p>Latest reservation updates from your customers.</p></span></div></header>
+          {recentReservations.length ? <ul className="owner-overview-recent-list">{recentReservations.slice(0, 4).map((reservation) => <li key={reservation.id}>
+            <span className="owner-overview-recent-dot" aria-hidden="true" />
+            <span><b>{reservation.customer || "Customer"} requested {reservation.medicine || "a medicine"}</b><small>{reservation.quantity} {Number(reservation.quantity) === 1 ? "item" : "items"} · {formatDate(reservation.createdAt)}</small></span>
+            <span className={`status-tag ${reservationStatus(reservation.status)}`}>{String(reservation.status || "pending").replace(/[_-]+/g, " ")}</span>
+          </li>)}</ul> : <div className="owner-overview-compact-empty">There are no customer requests to show yet.</div>}
+        </article>
+      </div>
+    </section>
   </section>;
 }
 
-function MedicineCard({ medicine, userCoordinates, reserving, onDetails, onReserve, onSave, onRate }) {
+function SavedPage({ likedMedicines, pharmacies, loading, error, busyMedicineId, busyPharmacyId, onRetry, onFindMedicines, onUnlike, onUnsave, onMedicineDetails, onPharmacyDetails }) {
+  const [activeTab, setActiveTab] = useState("medicines");
+
+  return <section className="content-section dashboard-section saved-page">
+    <SectionTitle eyebrow="YOUR ACCOUNT" title="Saved items" sub="Your liked medicines and pharmacies, kept together." />
+    <div className="saved-page-tabs" role="tablist" aria-label="Saved items">
+      <button className={activeTab === "medicines" ? "saved-page-tab active" : "saved-page-tab"} type="button" role="tab" aria-selected={activeTab === "medicines"} onClick={() => setActiveTab("medicines")}>Liked Medicines <span>{likedMedicines.length}</span></button>
+      <button className={activeTab === "pharmacies" ? "saved-page-tab active" : "saved-page-tab"} type="button" role="tab" aria-selected={activeTab === "pharmacies"} onClick={() => setActiveTab("pharmacies")}>Saved Pharmacies <span>{pharmacies.length}</span></button>
+    </div>
+    {error && <div className="saved-page-error" role="alert"><span>{error}</span><button type="button" onClick={onRetry}>Try again</button></div>}
+    {loading ? <div className="saved-page-loading" role="status"><span className="store-settings-spinner" aria-hidden="true" />Loading your saved items…</div>
+      : activeTab === "medicines"
+        ? likedMedicines.length ? <div className="liked-medicine-grid">{likedMedicines.map((medicine) => {
+          const stock = Number(medicine.stock) || 0;
+          const stockStatus = stock > 0 ? stock <= 5 ? "low" : "in" : "out";
+          return <article className="liked-medicine-card" key={medicine.id}>
+            <header><span className="medicine-icon" aria-hidden="true">✚</span><span className={`inventory-stock-status ${stockStatus}`}>{stockStatus === "out" ? "Out of stock" : stockStatus === "low" ? `Low stock · ${stock} left` : "In stock · " + stock + " available"}</span></header>
+            <h3>{medicine.name}</h3><p className="liked-medicine-generic">{medicine.genericName || "Generic name not listed"}{medicine.category ? ` · ${medicine.category}` : ""}</p>
+            <div className="liked-medicine-details">
+              <span><small>Price</small><b>{medicine.price === null ? "Unavailable" : `₹${Number(medicine.price).toFixed(2)}`}</b></span>
+              <span><small>Pharmacy</small><b>{medicine.pharmacy || "No approved pharmacy listing"}</b></span>
+            </div>
+            {medicine.location && <p className="liked-medicine-location">⌖ {medicine.location}</p>}
+            <footer><button className="button button-outline button-small" type="button" onClick={() => onMedicineDetails(medicine)}>Medicine details</button><button className="liked-medicine-remove" type="button" disabled={busyMedicineId === medicine.id} onClick={() => onUnlike(medicine)} aria-label={`Unlike ${medicine.name}`}>{busyMedicineId === medicine.id ? "Removing…" : "♥ Unlike"}</button></footer>
+          </article>;
+        })}</div> : <div className="saved-page-empty"><span aria-hidden="true">♡</span><h3>No liked medicines yet</h3><p>Like a medicine from Find medicines to keep it here.</p><button className="button button-outline button-small" type="button" onClick={onFindMedicines}>Browse medicines</button></div>
+        : pharmacies.length ? <div className="saved-pharmacy-grid">{pharmacies.map((pharmacy) => <article className="saved-pharmacy-card" key={pharmacy.id}>
+          <span className="saved-pharmacy-card-icon" aria-hidden="true">⌂</span><div className="saved-pharmacy-card-copy"><h3>{pharmacy.name || "Pharmacy"}</h3><p>{pharmacy.location || "Location not provided"}</p><span className="rating">★ {pharmacy.rating || "New"}</span></div>
+          <div className="saved-pharmacy-card-actions"><button className="button button-outline button-small" type="button" onClick={() => onPharmacyDetails(pharmacy)}>View Store Details</button><button className="saved-pharmacy-remove" type="button" disabled={busyPharmacyId === pharmacy.id} onClick={() => onUnsave(pharmacy)}>{busyPharmacyId === pharmacy.id ? "Removing…" : "Remove"}</button></div>
+        </article>)}</div> : <div className="saved-page-empty"><span aria-hidden="true">⌂</span><h3>No saved pharmacies yet</h3><p>Bookmark a pharmacy from Find medicines to keep it here.</p><button className="button button-outline button-small" type="button" onClick={onFindMedicines}>Browse pharmacies</button></div>}
+  </section>;
+}
+
+function MedicineCard({ medicine, reserving, savingPharmacy, savedPharmacy, savingMedicine, liked, onDetails, onReserve, onTogglePharmacy, onToggleLike, onRate }) {
   const [rating, setRating] = useState("5");
-  const destination = Number.isFinite(medicine.latitude) && Number.isFinite(medicine.longitude)
-    ? `${medicine.latitude},${medicine.longitude}`
-    : medicine.address || medicine.location;
-  const directions = new URLSearchParams({ api: "1", destination });
-  if (userCoordinates) directions.set("origin", `${userCoordinates.latitude},${userCoordinates.longitude}`);
   return <article className="medicine-card">
     <div className="medicine-card-top"><span className="medicine-icon">✚</span><span className={medicine.stock > 0 ? "stock-pill" : "stock-pill out"}>{medicine.stock > 0 ? "In stock" : "Out of stock"}</span></div>
     <div className="medicine-name"><h3>{medicine.name}</h3><p>{medicine.genericName} · {medicine.category}</p></div>
     <div className="pharmacy-summary"><span className="pharmacy-icon">⌂</span><span><b>{medicine.pharmacy}</b><small>⌖ {medicine.location}{Number.isFinite(medicine.distanceKm) ? ` · ${medicine.distanceKm.toFixed(1)} km away` : ""}</small></span><span className="rating">★ {medicine.rating}</span></div>
-    <a className="map-link" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Get directions ↗</a>
     <div className="card-divider" /><div className="price-row"><span>Price per pack</span><strong>₹{medicine.price.toFixed(2)}</strong></div>
-    <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock || reserving} onClick={onReserve}>{reserving ? "Reserving…" : "Reserve"}</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
+    <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock || reserving} onClick={onReserve}>{reserving ? "Reserving…" : "Reserve"}</button><button className="button button-outline" onClick={onDetails}>Details</button><button className={`icon-button save-pharmacy-button${liked ? " saved" : ""}`} type="button" onClick={() => onToggleLike(liked)} disabled={savingMedicine} aria-label={`${liked ? "Unlike" : "Like"} ${medicine.name}`} aria-pressed={liked}>{savingMedicine ? "…" : liked ? "♥" : "♡"}</button><button className={`icon-button save-store-button${savedPharmacy ? " saved" : ""}`} type="button" onClick={() => onTogglePharmacy(savedPharmacy)} disabled={savingPharmacy} aria-label={`${savedPharmacy ? "Remove" : "Save"} ${medicine.pharmacy} ${savedPharmacy ? "from" : "to"} saved pharmacies`} aria-pressed={savedPharmacy}>{savingPharmacy ? "…" : savedPharmacy ? "▣" : "▢"}</button></div>
     <div className="rate-control"><select aria-label={`Rating for ${medicine.pharmacy}`} value={rating} onChange={(event) => setRating(event.target.value)}><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select><button className="text-button rate-link" onClick={() => onRate(Number(rating))}>Rate pharmacy</button></div>
   </article>;
 }
@@ -1030,15 +1326,46 @@ function FloatingMedicineChatbot({ medicines, currentQuery }) {
   </aside>;
 }
 
-function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
+function OwnerDashboard({ data, user, onRefresh, onError, onNotice, onUpdateReservationStatus, updatingReservationId }) {
+  const [activeTab, setActiveTab] = useState("overview");
   const [form, setForm] = useState({ name: "", genericName: "", category: "", price: "", stock: "" });
   const [editing, setEditing] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingListingId, setDeletingListingId] = useState(null);
   const [inventorySearch, setInventorySearch] = useState("");
   const [inventoryStatus, setInventoryStatus] = useState("all");
   const [stockDrafts, setStockDrafts] = useState({});
   const [updatingStockId, setUpdatingStockId] = useState(null);
   const listings = data?.listings || [];
+  const reservations = data?.reservations || [];
+  const stockUnits = listings.reduce((total, listing) => total + Math.max(0, Number(listing.stock) || 0), 0);
+  const pendingReservations = reservations.filter((reservation) => reservation.status === "pending").length;
+  const completedReservations = reservations.filter((reservation) => ["received", "completed", "collected"].includes(reservation.status)).length;
+  const lowStockListings = listings.filter((listing) => Number(listing.stock) > 0 && Number(listing.stock) <= 5);
+  const recentReservations = [...reservations]
+    .filter((reservation) => reservation.createdAt && !Number.isNaN(new Date(reservation.createdAt).getTime()))
+    .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime());
+  const reservationTrends = Array.from({ length: 7 }, (_, index) => {
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() - (6 - index));
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+    const count = reservations.filter((reservation) => {
+      const createdAt = new Date(reservation.createdAt);
+      return !Number.isNaN(createdAt.getTime()) && createdAt >= day && createdAt < nextDay;
+    }).length;
+    return { date: day, count };
+  });
+  const maxTrendCount = Math.max(1, ...reservationTrends.map((day) => day.count));
+  const frequentMedicines = Object.values(reservations.reduce((medicinesByName, reservation) => {
+    const name = reservation.medicine || "Medicine";
+    const entry = medicinesByName[name] || { name, reservations: 0, quantity: 0 };
+    entry.reservations += 1;
+    entry.quantity += Number(reservation.quantity) || 0;
+    medicinesByName[name] = entry;
+    return medicinesByName;
+  }, {})).sort((first, second) => second.quantity - first.quantity || second.reservations - first.reservations).slice(0, 5);
   const stockCounts = listings.reduce((counts, listing) => {
     const stock = Number(listing.stock);
     counts.all += 1;
@@ -1104,47 +1431,141 @@ function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
     }
   };
 
-  return <section className="content-section dashboard-section"><SectionTitle eyebrow="PHARMACY PORTAL" title={data?.pharmacy?.name || "Store dashboard"} sub={data?.pharmacy?.status === "pending" ? "Your store is awaiting admin approval. You can prepare inventory while we review your registration." : "Manage your store listing, live inventory and customer requests."} />
-    {data?.pharmacy && <StoreProfileEditor key={JSON.stringify(data.pharmacy)} pharmacy={data.pharmacy} user={user} onRefresh={onRefresh} onError={onError} onNotice={onNotice} />}
-    <div className="dashboard-columns"><div className="panel"><h3>{editing ? "Edit medicine" : "Add a medicine"}</h3><form className="stack-form" onSubmit={submit}><label>Medicine name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Generic name<input required value={form.genericName} onChange={(e) => setForm({ ...form, genericName: e.target.value })} /></label><label>Category<input required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></label><div className="form-row"><label>Price (₹)<input type="number" min="0" step="0.01" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></label><label>Stock quantity<input type="number" min="0" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></label></div><button className="button button-primary" type="submit" disabled={submitting}>{submitting ? "Saving…" : (editing ? "Save changes" : "Add to inventory")}</button>{editing && <button className="text-button" type="button" onClick={() => { setEditing(null); setForm({ name: "", genericName: "", category: "", price: "", stock: "" }); }}>Cancel edit</button>}</form></div>
-      <div className="panel"><h3>Customer requests</h3>{data?.reservations?.length ? data.reservations.map((item) => <div className="request-line" key={item.id}><span><b>{item.medicine}</b><small>{item.customer} · Qty {item.quantity}</small></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>) : <p className="muted-copy">Reservations for your listed medicines will appear here.</p>}</div></div>
-    <div className="panel inventory-panel">
-      <div className="inventory-heading">
-        <div><h3>Medicine inventory</h3><p>Search your listings and keep stock levels up to date.</p></div>
-        <span className="subtle-count">{listings.length} {listings.length === 1 ? "listing" : "listings"}</span>
-      </div>
-      {listings.length ? <>
-        <div className="inventory-tools">
-          <label className="inventory-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search medicine inventory" placeholder="Search by medicine, generic name or category" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} /></label>
-          <div className="inventory-filters" role="group" aria-label="Filter inventory by stock status">
-            {[
-              ["all", "All", stockCounts.all],
-              ["in", "In Stock", stockCounts.in],
-              ["low", "Low Stock", stockCounts.low],
-              ["out", "Out of Stock", stockCounts.out],
-            ].map(([status, label, count]) => <button key={status} type="button" className={inventoryStatus === status ? "inventory-filter active" : "inventory-filter"} aria-pressed={inventoryStatus === status} onClick={() => setInventoryStatus(status)}>{label}<span>{count}</span></button>)}
-          </div>
-        </div>
-        <div className="inventory-result-summary">
-          <span>Showing <strong>{visibleListings.length}</strong> of <strong>{listings.length}</strong> medicines</span>
-          {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="text-button" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); }}>Clear filters</button>}
-        </div>
-        <div className="inventory-list">
-          {visibleListings.length ? visibleListings.map((listing) => {
-            const stockValue = stockDrafts[listing.id] ?? String(listing.stock);
-            const stock = Number(listing.stock);
-            const status = stock === 0 ? "out" : stock <= 5 ? "low" : "in";
-            const canSave = stockValue.trim() !== "" && Number.isInteger(Number(stockValue)) && Number(stockValue) >= 0 && Number(stockValue) !== stock;
-            return <div className="inventory-line" key={listing.id}>
-              <div className="inventory-medicine"><span className="inventory-medicine-icon" aria-hidden="true">✚</span><span><b>{listing.name}</b><small>{listing.genericName} · {listing.category} · ₹{listing.price.toFixed(2)}</small></span></div>
-              <span className={`inventory-stock-status ${status}`}>{status === "out" ? "Out of Stock" : status === "low" ? "Low Stock" : "In Stock"}</span>
-              <div className="inventory-stock-editor"><label htmlFor={`inventory-stock-${listing.id}`}>Quantity</label><div><input id={`inventory-stock-${listing.id}`} type="number" min="0" step="1" value={stockValue} onChange={(event) => setStockDrafts((drafts) => ({ ...drafts, [listing.id]: event.target.value }))} /><button className="button button-outline button-small" type="button" disabled={!canSave || updatingStockId !== null} onClick={() => updateStock(listing, stockValue)}>{updatingStockId === listing.id ? "Saving…" : "Save"}</button></div></div>
-              <button className="text-button inventory-edit" type="button" onClick={() => edit(listing)}>Edit details</button>
-            </div>;
-          }) : <p className="inventory-empty">No medicines match these filters. Try another search or stock status.</p>}
-        </div>
-      </> : <EmptyDashboard text="Add your first medicine using the form above." />}
+  const removeListing = async (listing) => {
+    if (!window.confirm(`Remove ${listing.name} from your inventory?`)) return;
+    setDeletingListingId(listing.id);
+    try {
+      await deleteOwnerMedicine(user.id, listing.id);
+      if (editing === listing.id) {
+        setEditing(null);
+        setForm({ name: "", genericName: "", category: "", price: "", stock: "" });
+      }
+      onNotice("Medicine listing removed.");
+      onRefresh();
+    } catch (err) {
+      onError(err.message || "Failed to remove medicine listing.");
+    } finally {
+      setDeletingListingId(null);
+    }
+  };
+
+  const formatReservationDate = (value) => {
+    const date = new Date(value);
+    return value && !Number.isNaN(date.getTime())
+      ? date.toLocaleString([], { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+      : "—";
+  };
+
+  const changeTab = (tab) => {
+    setActiveTab(tab);
+  };
+
+  const renderInventory = () => <div className="panel inventory-panel owner-dashboard-panel">
+    <div className="inventory-heading">
+      <div><h3>Medicine inventory</h3><p>Search listings, update stock, and manage your medicines.</p></div>
+      <span className="subtle-count">{listings.length} {listings.length === 1 ? "listing" : "listings"}</span>
     </div>
+    <div className="inventory-tools">
+      <label className="inventory-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search medicine inventory" placeholder="Search by medicine, generic name or category" value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} /></label>
+      <div className="inventory-filters" role="group" aria-label="Filter inventory by stock status">
+        {[["all", "All", stockCounts.all], ["in", "In Stock", stockCounts.in], ["low", "Low Stock", stockCounts.low], ["out", "Out of Stock", stockCounts.out]]
+          .map(([status, label, count]) => <button key={status} type="button" className={inventoryStatus === status ? "inventory-filter active" : "inventory-filter"} aria-pressed={inventoryStatus === status} onClick={() => setInventoryStatus(status)}>{label}<span>{count}</span></button>)}
+      </div>
+    </div>
+    <div className="inventory-result-summary">
+      <span>Showing <strong>{visibleListings.length}</strong> of <strong>{listings.length}</strong> medicines</span>
+      {(inventorySearch || inventoryStatus !== "all") && <button type="button" className="text-button" onClick={() => { setInventorySearch(""); setInventoryStatus("all"); }}>Clear filters</button>}
+    </div>
+    {listings.length ? <div className="owner-table-wrap">
+      <table className="owner-data-table owner-inventory-table">
+        <thead><tr><th>Medicine</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>{visibleListings.map((listing) => {
+          const stockValue = stockDrafts[listing.id] ?? String(listing.stock);
+          const stock = Number(listing.stock);
+          const status = stock === 0 ? "out" : stock <= 5 ? "low" : "in";
+          const canSave = stockValue.trim() !== "" && Number.isInteger(Number(stockValue)) && Number(stockValue) >= 0 && Number(stockValue) !== stock;
+          return <tr key={listing.id}>
+            <td><div className="owner-table-medicine"><span className="inventory-medicine-icon" aria-hidden="true">✚</span><span><b>{listing.name}</b><small>{listing.genericName} · {listing.category}</small></span></div></td>
+            <td>₹{Number(listing.price).toFixed(2)}</td>
+            <td><div className="inventory-stock-editor owner-table-stock"><label className="sr-only" htmlFor={`inventory-stock-${listing.id}`}>Stock quantity for {listing.name}</label><div><input id={`inventory-stock-${listing.id}`} type="number" min="0" step="1" value={stockValue} onChange={(event) => setStockDrafts((drafts) => ({ ...drafts, [listing.id]: event.target.value }))} /><button className="button button-outline button-small" type="button" disabled={!canSave || updatingStockId !== null} onClick={() => updateStock(listing, stockValue)}>{updatingStockId === listing.id ? "Saving…" : "Save"}</button></div></div></td>
+            <td><span className={`inventory-stock-status ${status}`}>{status === "out" ? "Out of stock" : status === "low" ? "Low stock" : "In stock"}</span></td>
+            <td><div className="owner-table-actions"><button className="text-button inventory-edit" type="button" onClick={() => edit(listing)}>Edit</button><button className="owner-delete-button" type="button" onClick={() => removeListing(listing)} disabled={deletingListingId === listing.id}>{deletingListingId === listing.id ? "Removing…" : "Delete"}</button></div></td>
+          </tr>;
+        })}</tbody>
+      </table>
+      {!visibleListings.length && <p className="inventory-empty">No medicines match these filters. Try another search or stock status.</p>}
+    </div> : <EmptyDashboard text="Add your first medicine to begin managing inventory." />}
+  </div>;
+
+  const renderReservationTable = () => reservations.length ? <div className="owner-table-wrap">
+    <table className="owner-data-table">
+      <thead><tr><th>Customer</th><th>Medicine</th><th>Quantity</th><th>Request date</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>{[...reservations].sort((first, second) => new Date(second.createdAt || 0) - new Date(first.createdAt || 0)).map((reservation) =>
+        <tr key={reservation.id}>
+          <td><div className="owner-customer-cell"><b>{reservation.customer || "Customer"}</b>{reservation.customerEmail && <small>{reservation.customerEmail}</small>}</div></td>
+          <td>{reservation.medicine || "Medicine"}</td>
+          <td>{reservation.quantity} {Number(reservation.quantity) === 1 ? "item" : "items"}</td>
+          <td>{formatReservationDate(reservation.createdAt)}</td>
+          <td><span className={`status-tag ${reservation.status}`}>{String(reservation.status || "pending").replace(/[_-]+/g, " ")}</span></td>
+          <td>{["pending", "received"].includes(reservation.status) ? <button className="owner-mark-received" type="button" onClick={() => onUpdateReservationStatus(reservation.id, reservation.status === "pending" ? "received" : "pending")} disabled={updatingReservationId === reservation.id}>{updatingReservationId === reservation.id ? "Updating…" : reservation.status === "pending" ? "Mark received" : "Mark pending"}</button> : <span className="muted-copy">No action</span>}</td>
+        </tr>
+      )}</tbody>
+    </table>
+  </div> : <EmptyDashboard text="Reservation requests will appear here when customers reserve your medicines." />;
+
+  const navigation = [
+    ["overview", "Overview"],
+    ["inventory", "Inventory"],
+    ["reservations", "Reservations"],
+    ["analytics", "Analytics"],
+    ["settings", "Store Settings"],
+  ];
+  const summaryCards = [
+    ["Total medicines", listings.length, "▧"],
+    ["Stock units", stockUnits, "▣"],
+    ["Low-stock items", lowStockListings.length, "△"],
+    ["Pending reservations", pendingReservations, "◷"],
+    ["Completed reservations", completedReservations, "✓"],
+  ];
+
+  return <section className="content-section dashboard-section owner-store-dashboard">
+    <SectionTitle eyebrow="PHARMACY PORTAL" title={data?.pharmacy?.name || "Store dashboard"} sub={data?.pharmacy?.status === "pending" ? "Your store is awaiting admin approval. You can prepare inventory while we review your registration." : "A clear view of your medicines, reservations, and store activity."} />
+    <nav className="owner-dashboard-tabs" aria-label="Store dashboard sections">
+      {navigation.map(([tab, label]) => <button key={tab} type="button" className={activeTab === tab ? "owner-dashboard-tab active" : "owner-dashboard-tab"} aria-current={activeTab === tab ? "page" : undefined} onClick={() => changeTab(tab)}>{label}</button>)}
+    </nav>
+
+    {activeTab === "overview" && <>
+      <div className="owner-store-summary-grid">{summaryCards.map(([label, value, icon]) => <article className="owner-store-summary-card" key={label}><span aria-hidden="true">{icon}</span><small>{label}</small><strong>{value.toLocaleString()}</strong></article>)}</div>
+      <div className="owner-store-overview-grid">
+        <section className="panel owner-dashboard-panel"><header className="owner-panel-heading"><div><h3>Recent reservation activity</h3><p>Latest customer requests from your store.</p></div><button className="text-button" type="button" onClick={() => changeTab("reservations")}>View reservations →</button></header>
+          {recentReservations.length ? <div className="owner-activity-list">{recentReservations.slice(0, 5).map((reservation) => <article key={reservation.id}><span className="owner-activity-dot" /><div><b>{reservation.customer || "Customer"} reserved {reservation.medicine || "a medicine"}</b><small>{reservation.quantity} {Number(reservation.quantity) === 1 ? "item" : "items"} · {formatReservationDate(reservation.createdAt)}</small></div><span className={`status-tag ${reservation.status}`}>{String(reservation.status || "pending").replace(/[_-]+/g, " ")}</span></article>)}</div> : <p className="muted-copy">There are no recent reservations.</p>}
+        </section>
+        <section className="panel owner-dashboard-panel"><header className="owner-panel-heading"><div><h3>Stock watch</h3><p>Medicines that may need restocking.</p></div><button className="text-button" type="button" onClick={() => changeTab("inventory")}>Open inventory →</button></header>
+          {lowStockListings.length ? <div className="owner-stock-watch">{lowStockListings.slice(0, 5).map((listing) => <div key={listing.id}><span><b>{listing.name}</b><small>{listing.genericName || listing.category}</small></span><span>{listing.stock} left</span></div>)}</div> : <p className="muted-copy">{listings.length ? "No low-stock medicines right now." : "Add medicines to start tracking stock."}</p>}
+        </section>
+      </div>
+    </>}
+
+    {activeTab === "inventory" && <div className="owner-inventory-view">
+      <div className="panel owner-dashboard-panel owner-add-medicine"><header className="owner-panel-heading"><div><h3>{editing ? "Edit medicine details" : "Add a medicine"}</h3><p>{editing ? "Update listing details and save your changes." : "Add a medicine listing to your store inventory."}</p></div></header><form className="owner-medicine-form" onSubmit={submit}><label>Medicine name<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label>Generic name<input required value={form.genericName} onChange={(event) => setForm({ ...form, genericName: event.target.value })} /></label><label>Category<input required value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} /></label><label>Price (₹)<input type="number" min="0" step="0.01" required value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label><label>Stock units<input type="number" min="0" step="1" required value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} /></label><div className="owner-medicine-form-actions"><button className="button button-primary button-small" type="submit" disabled={submitting}>{submitting ? "Saving…" : editing ? "Save changes" : "Add medicine"}</button>{editing && <button className="button button-outline button-small" type="button" onClick={() => { setEditing(null); setForm({ name: "", genericName: "", category: "", price: "", stock: "" }); }}>Cancel</button>}</div></form></div>
+      <div id="owner-inventory-section">{renderInventory()}</div>
+    </div>}
+
+    {activeTab === "reservations" && <section className="panel owner-dashboard-panel owner-reservations-view"><header className="owner-panel-heading"><div><h3>Reservation management</h3><p>Customer details, requested quantities, and fulfillment status.</p></div><span className="subtle-count">{reservations.length} total</span></header>{renderReservationTable()}</section>}
+
+    {activeTab === "analytics" && <div className="owner-analytics-grid">
+      <section className="panel owner-dashboard-panel"><header className="owner-panel-heading"><div><h3>Reservation trend</h3><p>Reservation requests created in the last seven days.</p></div></header>
+        {reservations.length ? <div className="owner-trend-chart" aria-label="Reservations for each of the last seven days">{reservationTrends.map((day) => <div className="owner-trend-day" key={day.date.toISOString()}><strong>{day.count}</strong><div className="owner-trend-bar-track"><span style={{ height: `${Math.max(day.count ? 10 : 3, day.count / maxTrendCount * 100)}%` }} /></div><small>{day.date.toLocaleDateString([], { weekday: "short" })}</small></div>)}</div> : <p className="muted-copy">Reservation trends will appear when customers begin reserving medicines.</p>}
+      </section>
+      <section className="panel owner-dashboard-panel"><header className="owner-panel-heading"><div><h3>Frequently reserved</h3><p>Medicines ranked by total requested units.</p></div></header>
+        {frequentMedicines.length ? <ol className="owner-frequent-list">{frequentMedicines.map((medicine) => <li key={medicine.name}><span><b>{medicine.name}</b><small>{medicine.reservations} {medicine.reservations === 1 ? "reservation" : "reservations"}</small></span><strong>{medicine.quantity} {medicine.quantity === 1 ? "unit" : "units"}</strong></li>)}</ol> : <p className="muted-copy">Frequently reserved medicines will appear here.</p>}
+      </section>
+      <section className="panel owner-dashboard-panel owner-analytics-activity"><header className="owner-panel-heading"><div><h3>Recent updates</h3><p>Latest reservation requests and their current status.</p></div></header>
+        {recentReservations.length ? <div className="owner-activity-list">{recentReservations.slice(0, 8).map((reservation) => <article key={reservation.id}><span className="owner-activity-dot" /><div><b>{reservation.medicine || "Medicine"} · {reservation.customer || "Customer"}</b><small>Requested {formatReservationDate(reservation.createdAt)} · Qty {reservation.quantity}</small></div><span className={`status-tag ${reservation.status}`}>{String(reservation.status || "pending").replace(/[_-]+/g, " ")}</span></article>)}</div> : <p className="muted-copy">Recent activity will appear here when your store receives reservations.</p>}
+      </section>
+    </div>}
+
+    {activeTab === "settings" && data?.pharmacy && <div className="owner-settings-view"><StoreProfileEditor pharmacy={data.pharmacy} user={user} onRefresh={onRefresh} onNotice={onNotice} /></div>}
   </section>;
 }
 
@@ -1194,62 +1615,105 @@ function AdminDashboard({ data, currentAdminId, onRefresh, onError, onNotice }) 
   </section>;
 }
 
-function PharmacyCard({ pharmacy }) {
-  return <article className="medicine-card saved-pharmacy"><span className="medicine-icon">⌂</span><h3>{pharmacy.name}</h3><p>{pharmacy.location}</p><span className="rating">★ {pharmacy.rating || "New"}</span></article>;
-}
-
-function NearbyPharmacies({ pharmacies, location, coordinates }) {
-  const uniquePharmacies = [...new Map(pharmacies.map((pharmacy) => [pharmacy.id || pharmacy.pharmacyId, pharmacy])).values()];
+function NearbyPharmacies({ pharmacies, location, onDetails }) {
+  const uniquePharmacies = [...new Map(pharmacies.map((pharmacy) => [pharmacyIdentity(pharmacy), pharmacy])).values()];
 
   return <section className="nearby-shops" aria-labelledby="nearby-shops-title">
     <div className="nearby-shops-heading">
       <div><span className="eyebrow">PHARMACIES NEAR YOU</span><h3 id="nearby-shops-title">Nearby medical shops</h3><p>{location ? `Showing approved shops near ${location}.` : "Closest shops first."}</p></div>
       <span className="nearby-shop-count">{uniquePharmacies.length} {uniquePharmacies.length === 1 ? "shop" : "shops"}</span>
     </div>
-    {uniquePharmacies.length ? <div className="nearby-shop-grid">{uniquePharmacies.map((pharmacy) => {
-      const destination = Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
-        ? `${pharmacy.latitude},${pharmacy.longitude}`
-        : pharmacy.address || pharmacy.location;
-      const directions = new URLSearchParams({ api: "1", destination });
-      if (coordinates) directions.set("origin", `${coordinates.latitude},${coordinates.longitude}`);
-
-      return <article className="nearby-shop" key={pharmacy.id || pharmacy.pharmacyId}>
+    {uniquePharmacies.length ? <div className="nearby-shop-grid">{uniquePharmacies.map((pharmacy) =>
+      <article className="nearby-shop" key={pharmacyIdentity(pharmacy)}>
         <span className="nearby-shop-icon" aria-hidden="true">⌂</span>
-        <div className="nearby-shop-copy"><h4>{pharmacy.name || pharmacy.pharmacy}</h4><p>{pharmacy.location}</p><small>{pharmacy.address || pharmacy.location}</small></div>
+        <button className="nearby-shop-copy nearby-shop-details" type="button" onClick={() => onDetails(pharmacy)} aria-label={`View details for ${pharmacy.name || pharmacy.pharmacy}`}><h4>{pharmacy.name || pharmacy.pharmacy}</h4><p>{pharmacy.location}</p>{pharmacy.address && pharmacy.address !== pharmacy.location && <small>{pharmacy.address}</small>}</button>
         <div className="nearby-shop-meta"><span className="rating">★ {pharmacy.rating || "New"}</span>{Number.isFinite(pharmacy.distanceKm) && <span>{pharmacy.distanceKm.toFixed(1)} km</span>}</div>
-        <a className="button button-outline button-small nearby-directions" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Directions ↗</a>
-      </article>;
-    })}</div> : <div className="nearby-shop-empty">No approved medical shops were found for this location.</div>}
+        <button className="button button-outline button-small nearby-details" type="button" onClick={() => onDetails(pharmacy)}>Details</button>
+      </article>
+    )}</div> : <div className="nearby-shop-empty">No approved medical shops were found for this location.</div>}
   </section>;
 }
 
-function StoreProfileEditor({ pharmacy, user, onRefresh, onError, onNotice }) {
-  const [profile, setProfile] = useState({ name: pharmacy.name, location: pharmacy.location, address: pharmacy.address || "", phone: pharmacy.phone || "", latitude: pharmacy.latitude ?? null, longitude: pharmacy.longitude ?? null });
+function StoreProfileEditor({ pharmacy, user, onRefresh, onNotice }) {
+  const [profile, setProfile] = useState({ name: pharmacy.name || "", location: pharmacy.location || "", address: pharmacy.address || "", phone: pharmacy.phone || "", latitude: pharmacy.latitude ?? null, longitude: pharmacy.longitude ?? null });
   const [saving, setSaving] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
 
   const locateStore = async () => {
     setLocating(true);
+    setFormError("");
+    setSavedMessage("");
     try {
       const coordinates = await getCurrentPosition();
       const address = await reverseGeocode(coordinates);
       setProfile((current) => ({ ...current, ...coordinates, location: address, address }));
-    } catch (err) { onError(err.message); }
+    } catch (err) { setFormError(err.message || "Could not look up your current location."); }
     finally { setLocating(false); }
   };
 
   const submit = async (event) => {
     event.preventDefault();
-    if (saving) return;
+    if (saving || !editing) return;
+    const cleanProfile = {
+      ...profile,
+      name: profile.name.trim(),
+      location: profile.location.trim(),
+      address: profile.address.trim(),
+      phone: profile.phone.trim(),
+    };
+    const phoneDigits = cleanProfile.phone.replace(/\D/g, "");
+    if (cleanProfile.name.length < 2) {
+      setFormError("Enter a store name with at least 2 characters.");
+      return;
+    }
+    if (cleanProfile.location.length < 2) {
+      setFormError("Enter a valid store location.");
+      return;
+    }
+    if (cleanProfile.address.length < 5) {
+      setFormError("Enter a complete store address with at least 5 characters.");
+      return;
+    }
+    if (!/^\+?[\d\s().-]+$/.test(cleanProfile.phone) || phoneDigits.length < 7 || phoneDigits.length > 15) {
+      setFormError("Enter a valid phone number with 7 to 15 digits.");
+      return;
+    }
+
     setSaving(true);
+    setFormError("");
+    setSavedMessage("");
     try {
-      await updateOwnerPharmacyProfile(user.id, profile);
+      await updateOwnerPharmacyProfile(user.id, cleanProfile);
+      setProfile(cleanProfile);
+      setEditing(false);
+      setSavedMessage("Changes saved. Your pharmacy profile has been updated.");
       onNotice("Pharmacy profile updated.");
       onRefresh();
-    } catch (err) { onError(err.message || "Failed to update pharmacy profile."); }
+    } catch (err) { setFormError(err.message || "Failed to update pharmacy profile."); }
     finally { setSaving(false); }
   };
-  return <div className="panel store-profile-panel"><h3>Pharmacy profile</h3><form className="store-profile-form" onSubmit={submit}><label>Store name<input required value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></label><label>Location<input required value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value, latitude: null, longitude: null })} /></label><label>Address<input required value={profile.address} onChange={(e) => setProfile({ ...profile, address: e.target.value })} /></label><label>Phone<input required value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} /></label><button className="button button-outline button-small" type="button" onClick={locateStore} disabled={locating || saving}>{locating ? "Locating…" : "Use current store location"}</button><small className="map-attribution">Location lookup © OpenStreetMap</small><button className="button button-outline button-small" type="submit" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></form></div>;
+  return <section className="panel store-profile-panel" aria-labelledby="store-profile-title">
+    <header className="store-profile-heading">
+      <span className="store-profile-icon" aria-hidden="true">✚</span>
+      <div className="store-profile-heading-copy"><span className="eyebrow">STORE SETTINGS</span><h3 id="store-profile-title">Pharmacy profile</h3><p>Keep your store information accurate for nearby customers.</p></div>
+      {!editing && <button className="button button-outline button-small" type="button" onClick={() => { setEditing(true); setFormError(""); setSavedMessage(""); }}>Edit</button>}
+    </header>
+    {savedMessage && <p className="store-profile-feedback success" role="status"><span aria-hidden="true">✓</span>{savedMessage}</p>}
+    {formError && <p className="store-profile-feedback error" role="alert"><span aria-hidden="true">!</span>{formError}</p>}
+    <form className="store-profile-form" onSubmit={submit} noValidate>
+      <label>Store name<input required minLength="2" maxLength="100" autoComplete="organization" value={profile.name} disabled={!editing || saving} aria-invalid={Boolean(formError && profile.name.trim().length < 2)} onChange={(event) => { setProfile({ ...profile, name: event.target.value }); setFormError(""); setSavedMessage(""); }} /></label>
+      <label className="store-location-field">Location<input required minLength="2" maxLength="120" autoComplete="address-level2" value={profile.location} disabled={!editing || saving} aria-invalid={Boolean(formError && profile.location.trim().length < 2)} onChange={(event) => { setProfile({ ...profile, location: event.target.value, latitude: null, longitude: null }); setFormError(""); setSavedMessage(""); }} />
+        <span className="store-location-help">Used to help customers find your pharmacy nearby.</span>
+        {editing && <><button className="store-location-button" type="button" onClick={locateStore} disabled={locating || saving}>{locating ? <><span className="store-settings-spinner" aria-hidden="true" />Looking up location…</> : "⌖ Use current store location"}</button><small className="store-location-attribution">Location lookup powered by OpenStreetMap.</small></>}
+      </label>
+      <label className="store-address-field">Address<textarea required minLength="5" maxLength="240" autoComplete="street-address" rows="3" value={profile.address} disabled={!editing || saving} aria-invalid={Boolean(formError && profile.address.trim().length < 5)} onChange={(event) => { setProfile({ ...profile, address: event.target.value }); setFormError(""); setSavedMessage(""); }} /></label>
+      <label>Phone<input required type="tel" inputMode="tel" autoComplete="tel" maxLength="25" placeholder="+91 98765 43210" value={profile.phone} disabled={!editing || saving} aria-invalid={formError === "Enter a valid phone number with 7 to 15 digits."} onChange={(event) => { setProfile({ ...profile, phone: event.target.value }); setFormError(""); setSavedMessage(""); }} /></label>
+      {editing && <div className="store-profile-actions"><button className="button button-primary button-small" type="submit" disabled={saving || locating}>{saving ? <><span className="store-settings-spinner" aria-hidden="true" />Saving changes…</> : "Save Changes"}</button><button className="button button-outline button-small" type="button" disabled={saving || locating} onClick={() => { setProfile({ name: pharmacy.name || "", location: pharmacy.location || "", address: pharmacy.address || "", phone: pharmacy.phone || "", latitude: pharmacy.latitude ?? null, longitude: pharmacy.longitude ?? null }); setEditing(false); setFormError(""); setSavedMessage(""); }}>Cancel</button></div>}
+    </form>
+  </section>;
 }
 
 function ProfilePanel({ profile, user, onChange, onError, onNotice }) {
@@ -1285,7 +1749,8 @@ function EmptyDashboard({ text }) {
 
 function Modal({ title, onClose, children, className = "", showHeading = true }) {
   const modifier = className ? ` ${className}` : "";
-  return <div className={`modal-backdrop${modifier}-backdrop`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className={`modal${modifier}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Close">×</button>{showHeading && <><span className="eyebrow">MEDLYTIC</span><h2>{title}</h2></>}{children}</section></div>;
+  const backdropClass = className ? `modal-backdrop ${className}-backdrop` : "modal-backdrop";
+  return <div className={backdropClass} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className={`modal${modifier}`} role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Close">×</button>{showHeading && <><span className="eyebrow">MEDLYTIC</span><h2>{title}</h2></>}{children}</section></div>;
 }
 
 export default App;

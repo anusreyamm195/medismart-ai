@@ -3,6 +3,7 @@ import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypt
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectMongoRepositories } from "./db/mongo.js";
+import { demoPharmacyIds, isRegisteredPharmacy, removeDemoPharmacies } from "./demo-pharmacies.js";
 import { handleAuthRoute } from "./routes/auth.routes.js";
 import { handleMedicineRoute } from "./routes/medicine.routes.js";
 
@@ -66,7 +67,7 @@ function createAppServer({
     throw new Error("MongoDB data and repositories are required to create the API server.");
   }
   const data = applicationData;
-  for (const key of ["users", "pharmacies", "medicines", "listings", "history", "savedPharmacies", "reservations", "reports", "audit", "ratings"]) data[key] ||= [];
+  for (const key of ["users", "pharmacies", "medicines", "listings", "history", "savedPharmacies", "likedMedicines", "reservations", "reports", "audit", "ratings"]) data[key] ||= [];
   const saveApplicationData = () => applicationDataRepository.save(data);
   const users = {
     async findById(userId) {
@@ -166,7 +167,7 @@ function createAppServer({
         const searchLatitude = hasLatitude ? coordinate(url.searchParams.get("latitude"), "Latitude", -90, 90) : null;
         const searchLongitude = hasLongitude ? coordinate(url.searchParams.get("longitude"), "Longitude", -180, 180) : null;
         const pharmacies = data.pharmacies
-          .filter((item) => item.status === "approved" && (hasLatitude || !location || item.location.toLowerCase().includes(location)))
+          .filter((item) => isRegisteredPharmacy(item) && item.status === "approved" && (hasLatitude || !location || item.location.toLowerCase().includes(location)))
           .map((pharmacy) => ({
             ...pharmacySummary(pharmacy),
             distanceKm: hasLatitude && Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
@@ -190,14 +191,14 @@ function createAppServer({
       if (method === "GET" && pathname === "/api/saved-pharmacies") {
         const current = requireRole("patient");
         const pharmacies = data.savedPharmacies.filter((item) => item.userId === current.id).flatMap((saved) => {
-          const pharmacy = data.pharmacies.find((item) => item.id === saved.pharmacyId && item.status === "approved");
+          const pharmacy = data.pharmacies.find((item) => item.id === saved.pharmacyId && isRegisteredPharmacy(item) && item.status === "approved");
           return pharmacy ? [pharmacySummary(pharmacy)] : [];
         });
         return send(200, { pharmacies });
       }
       if (method === "POST" && pathname === "/api/saved-pharmacies") {
         const current = requireRole("patient");
-        const pharmacy = data.pharmacies.find((item) => item.id === body.pharmacyId && item.status === "approved");
+        const pharmacy = data.pharmacies.find((item) => item.id === body.pharmacyId && isRegisteredPharmacy(item) && item.status === "approved");
         if (!pharmacy) fail(404, "Pharmacy not found.");
         if (!data.savedPharmacies.some((item) => item.userId === current.id && item.pharmacyId === pharmacy.id)) data.savedPharmacies.push({ userId: current.id, pharmacyId: pharmacy.id, createdAt: new Date().toISOString() });
         await saveApplicationData();
@@ -209,6 +210,65 @@ function createAppServer({
         data.savedPharmacies = data.savedPharmacies.filter((item) => item.userId !== current.id || item.pharmacyId !== pharmacyId);
         await saveApplicationData();
         return send(200, { message: "Saved pharmacy removed." });
+      }
+      if (method === "GET" && pathname === "/api/liked-medicines") {
+        const current = requireRole("patient");
+        const medicines = await Promise.all(data.likedMedicines
+          .filter((item) => item.userId === current.id)
+          .map(async (liked) => {
+            const medicine = await medicineRepository.findById(liked.medicineId);
+            if (!medicine) return null;
+            const listings = medicine.listings.flatMap((listing) => {
+              const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && isRegisteredPharmacy(item) && item.status === "approved");
+              return pharmacy ? [{
+                id: listing.listingId || listing.id,
+                price: Number(listing.price),
+                stock: Number(listing.stock),
+                pharmacy: pharmacy.name,
+                pharmacyId: pharmacy.id,
+                location: pharmacy.location,
+                address: pharmacy.address,
+                rating: Number(pharmacy.rating) || 0,
+              }] : [];
+            }).sort((first, second) => Number(second.stock) - Number(first.stock) || first.price - second.price);
+            const listing = listings[0];
+            return {
+              id: medicine.id,
+              medicineId: medicine.id,
+              name: medicine.name,
+              genericName: medicine.genericName || "",
+              category: medicine.category || "",
+              info: medicine.info || "",
+              listingId: listing?.id || null,
+              price: listing?.price ?? null,
+              stock: listing?.stock ?? 0,
+              pharmacyId: listing?.pharmacyId || null,
+              pharmacy: listing?.pharmacy || "No approved pharmacy listing",
+              location: listing?.location || "",
+              address: listing?.address || "",
+              createdAt: liked.createdAt,
+            };
+          }));
+        return send(200, { medicines: medicines.filter(Boolean) });
+      }
+      if (method === "POST" && pathname === "/api/liked-medicines") {
+        const current = requireRole("patient");
+        const medicineId = text(body.medicineId, "Medicine ID", 120);
+        const medicine = await medicineRepository.findById(medicineId);
+        if (!medicine) fail(404, "Medicine not found.");
+        if (!data.likedMedicines.some((item) => item.userId === current.id && item.medicineId === medicineId)) {
+          data.likedMedicines.push({ userId: current.id, medicineId, createdAt: new Date().toISOString() });
+          await saveApplicationData();
+        }
+        return send(201, { message: "Medicine added to Liked Medicines." });
+      }
+      const likedMedicineRoute = pathname.match(/^\/api\/liked-medicines\/([^/]+)$/);
+      if (method === "DELETE" && likedMedicineRoute) {
+        const current = requireRole("patient");
+        const medicineId = decodeURIComponent(likedMedicineRoute[1]);
+        data.likedMedicines = data.likedMedicines.filter((item) => item.userId !== current.id || item.medicineId !== medicineId);
+        await saveApplicationData();
+        return send(200, { message: "Medicine removed from Liked Medicines." });
       }
       if (method === "GET" && pathname === "/api/reservations") {
         const current = requireRole("patient");
@@ -241,7 +301,7 @@ function createAppServer({
         const quantity = Number(body.quantity ?? 1);
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) fail(400, "Quantity must be between 1 and 20.");
         if (Number(listing.stock) < quantity) fail(409, "There is not enough stock to reserve that quantity.");
-        const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && item.status === "approved");
+        const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && isRegisteredPharmacy(item) && item.status === "approved");
         if (!pharmacy) fail(404, "Pharmacy not found.");
         const reservation = { id: id("reservation"), userId: current.id, pharmacyId: pharmacy.id, listingId: listing.listingId || listing.id, medicine: listing.name, quantity, status: "pending", createdAt: new Date().toISOString() };
         data.reservations.unshift(reservation);
@@ -249,10 +309,21 @@ function createAppServer({
         await saveApplicationData();
         return send(201, { message: `Request sent to ${pharmacy.name}. The pharmacy will confirm availability.`, reservation: { id: reservation.id, status: reservation.status } });
       }
+      const reservationRoute = pathname.match(/^\/api\/reservations\/([^/]+)$/);
+      if (method === "DELETE" && reservationRoute) {
+        const current = requireRole("patient");
+        const reservationId = decodeURIComponent(reservationRoute[1]);
+        const index = data.reservations.findIndex((item) => item.id === reservationId && item.userId === current.id);
+        if (index < 0) fail(404, "Reservation not found.");
+        data.reservations.splice(index, 1);
+        audit(current.email, "reservation.removed", reservationId);
+        await saveApplicationData();
+        return send(200, { message: "Reservation removed." });
+      }
       const ratingRoute = pathname.match(/^\/api\/pharmacies\/([^/]+)\/ratings$/);
       if (method === "POST" && ratingRoute) {
         const current = requireRole("patient");
-        const pharmacy = data.pharmacies.find((item) => item.id === decodeURIComponent(ratingRoute[1]) && item.status === "approved");
+        const pharmacy = data.pharmacies.find((item) => item.id === decodeURIComponent(ratingRoute[1]) && isRegisteredPharmacy(item) && item.status === "approved");
         if (!pharmacy) fail(404, "Pharmacy not found.");
         const rating = Number(body.rating);
         if (!Number.isInteger(rating) || rating < 1 || rating > 5) fail(400, "Rating must be a whole number from 1 to 5.");
@@ -438,9 +509,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   async function startServer() {
     const repositories = await connectMongoRepositories(process.env.MONGO_URI);
     const data = await repositories.applicationData.load();
+    const removedDemoPharmacies = removeDemoPharmacies(data);
+    const removedDemoListings = await repositories.medicines.deleteListingsForPharmacies([...demoPharmacyIds]);
+    if (removedDemoPharmacies || removedDemoListings) await repositories.applicationData.save(data);
     data.users = await repositories.users.findAll();
     data.medicines = await repositories.medicines.findAllProducts();
-    data.listings = await repositories.medicines.findAllListings();
+    data.listings = (await repositories.medicines.findAllListings())
+      .filter((listing) => !demoPharmacyIds.has(listing.pharmacyId));
     const server = createAppServer({
       data,
       userRepository: repositories.users,

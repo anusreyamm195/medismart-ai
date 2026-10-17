@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { MongoClient } from "mongodb";
+import { demoPharmacyIds } from "./demo-pharmacies.js";
 import {
   applicationStateCollectionName,
   listingCollectionName,
@@ -36,12 +37,17 @@ try {
   }
 
   for (const medicine of legacyData.medicines || []) {
-    const { listingId, pharmacyId, price, stock, ...product } = medicine;
+    const product = { ...medicine };
+    delete product.listingId;
+    delete product.pharmacyId;
+    delete product.price;
+    delete product.stock;
     await medicines.updateOne({ id: product.id }, { $setOnInsert: product }, { upsert: true });
   }
 
   let importedListings = 0;
   for (const listing of legacyData.listings || []) {
+    if (demoPharmacyIds.has(listing.pharmacyId)) continue;
     const pharmacy = (legacyData.pharmacies || []).find((item) => item.id === listing.pharmacyId);
     const result = await listings.updateOne(
       { id: listing.id },
@@ -74,7 +80,12 @@ try {
 
   const stateData = Object.fromEntries(
     ["pharmacies", "history", "savedPharmacies", "reservations", "reports", "audit", "ratings"]
-      .map((key) => [key, legacyData[key] || []]),
+      .map((key) => [
+        key,
+        key === "pharmacies"
+          ? (legacyData.pharmacies || []).filter((pharmacy) => !demoPharmacyIds.has(pharmacy.id))
+          : legacyData[key] || [],
+      ]),
   );
   await state.updateOne(
     { _id: "primary" },

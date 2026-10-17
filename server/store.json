@@ -27,45 +27,6 @@
   ],
   "pharmacies": [
     {
-      "id": "pharmacy-green-cross",
-      "ownerId": "user-owner",
-      "name": "Green Cross Pharmacy",
-      "location": "Indiranagar, Bengaluru",
-      "address": "12 100 Feet Road, Indiranagar, Bengaluru",
-      "phone": "+91 80 4000 1001",
-      "latitude": 12.9719,
-      "longitude": 77.6412,
-      "status": "approved",
-      "rating": 4.8,
-      "createdAt": "2026-10-13T12:08:52.662Z"
-    },
-    {
-      "id": "pharmacy-city-care",
-      "ownerId": null,
-      "name": "City Care Medicals",
-      "location": "Koramangala, Bengaluru",
-      "address": "80 Feet Road, Koramangala, Bengaluru",
-      "phone": "+91 80 4000 1002",
-      "latitude": 12.9352,
-      "longitude": 77.6245,
-      "status": "approved",
-      "rating": 4.5,
-      "createdAt": "2026-10-13T12:08:52.664Z"
-    },
-    {
-      "id": "pharmacy-wellness",
-      "ownerId": null,
-      "name": "Wellness Drugstore",
-      "location": "Whitefield, Bengaluru",
-      "address": "Main Road, Whitefield, Bengaluru",
-      "phone": "+91 80 4000 1003",
-      "latitude": 12.9698,
-      "longitude": 77.75,
-      "status": "approved",
-      "rating": 4.6,
-      "createdAt": "2026-10-13T12:08:52.664Z"
-    },
-    {
       "id": "pharmacy-b991083523639385be",
       "ownerId": "user-96e291baac9388f825",
       "name": "Medical store",
@@ -171,76 +132,6 @@
     }
   ],
   "listings": [
-    {
-      "id": "listing-1",
-      "medicineId": "med-paracetamol",
-      "pharmacyId": "pharmacy-green-cross",
-      "price": 30,
-      "stock": 42
-    },
-    {
-      "id": "listing-2",
-      "medicineId": "med-paracetamol",
-      "pharmacyId": "pharmacy-city-care",
-      "price": 32,
-      "stock": 18
-    },
-    {
-      "id": "listing-3",
-      "medicineId": "med-paracetamol",
-      "pharmacyId": "pharmacy-wellness",
-      "price": 28,
-      "stock": 0
-    },
-    {
-      "id": "listing-10",
-      "medicineId": "med-calpol",
-      "pharmacyId": "pharmacy-green-cross",
-      "price": 34,
-      "stock": 21
-    },
-    {
-      "id": "listing-4",
-      "medicineId": "med-ibuprofen",
-      "pharmacyId": "pharmacy-green-cross",
-      "price": 45,
-      "stock": 16
-    },
-    {
-      "id": "listing-5",
-      "medicineId": "med-ibuprofen",
-      "pharmacyId": "pharmacy-city-care",
-      "price": 42,
-      "stock": 25
-    },
-    {
-      "id": "listing-6",
-      "medicineId": "med-cetirizine",
-      "pharmacyId": "pharmacy-city-care",
-      "price": 22,
-      "stock": 31
-    },
-    {
-      "id": "listing-7",
-      "medicineId": "med-cetirizine",
-      "pharmacyId": "pharmacy-wellness",
-      "price": 24,
-      "stock": 12
-    },
-    {
-      "id": "listing-8",
-      "medicineId": "med-vitamin-c",
-      "pharmacyId": "pharmacy-green-cross",
-      "price": 18,
-      "stock": 60
-    },
-    {
-      "id": "listing-9",
-      "medicineId": "med-omeprazole",
-      "pharmacyId": "pharmacy-wellness",
-      "price": 56,
-      "stock": 9
-    },
     {
       "id": "listing-7e39178e48cef34862",
       "medicineId": "medicine-58f1efc1308aea3932",

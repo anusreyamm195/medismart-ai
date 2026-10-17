@@ -1,3 +1,5 @@
+import { isRegisteredPharmacy } from "../demo-pharmacies.js";
+
 export async function handleMedicineRoute(context) {
   const {
     method,
@@ -39,10 +41,11 @@ export async function handleMedicineRoute(context) {
     if (!Number.isFinite(maxPrice) && maxPrice !== Infinity || maxPrice < 0) fail(400, "Maximum price must be a non-negative number.");
     const medicines = await medicineRepository.findAll();
     const listings = medicines.flatMap((medicine) => {
-      const pharmacy = data.pharmacies.find((item) => item.id === medicine.pharmacyId && item.status === "approved");
+      const pharmacy = data.pharmacies.find((item) => item.id === medicine.pharmacyId && isRegisteredPharmacy(item) && item.status === "approved");
       if (!pharmacy) return [];
       const searchable = `${medicine.name} ${medicine.genericName} ${medicine.category} ${pharmacy.name}`.toLowerCase();
-      if (q && !searchable.includes(q)) return [];
+      if (pharmacyId && pharmacy.id !== pharmacyId) return [];
+      if (searchTerms.length && !searchTerms.some((term) => searchable.includes(term))) return [];
       const searchableLocation = `${pharmacy.location || ""} ${pharmacy.address || ""}`.toLowerCase();
       if (!hasLatitude && locationTerms.length && !locationTerms.some((term) => searchableLocation.includes(term))) return [];
       if (medicine.price > maxPrice) return [];
@@ -85,7 +88,7 @@ export async function handleMedicineRoute(context) {
     if (!medicine) fail(404, "Medicine not found.");
     const medicineListings = medicine.listings;
     const listings = medicineListings.flatMap((listing) => {
-      const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && item.status === "approved");
+      const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && isRegisteredPharmacy(item) && item.status === "approved");
       return pharmacy ? [{
         id: listing.listingId || listing.id,
         price: Number(listing.price),
@@ -113,8 +116,30 @@ export async function handleMedicineRoute(context) {
     const pharmacy = data.pharmacies.find((item) => item.ownerId === current.id);
     if (!pharmacy) fail(404, "No pharmacy is associated with this account.");
     const listings = data.listings.filter((item) => item.pharmacyId === pharmacy.id).map((item) => ({ ...data.medicines.find((medicine) => medicine.id === item.medicineId), ...item }));
-    const reservations = data.reservations.filter((item) => item.pharmacyId === pharmacy.id).map((item) => ({ ...item, customer: data.users.find((candidate) => candidate.id === item.userId)?.name || "Customer" }));
+    const reservations = data.reservations.filter((item) => item.pharmacyId === pharmacy.id).map((item) => {
+      const customer = data.users.find((candidate) => candidate.id === item.userId);
+      return { ...item, customer: customer?.name || "Customer", customerEmail: customer?.email || "" };
+    });
     send(200, { pharmacy, listings, reservations, stats: { listingCount: listings.length, inStock: listings.filter((item) => item.stock > 0).length, rating: pharmacy.rating || 0 } });
+    return true;
+  }
+
+  const ownerReservationRoute = pathname.match(/^\/api\/owner\/reservations\/([^/]+)$/);
+  if (ownerReservationRoute && method === "PATCH") {
+    const current = requireRole("owner");
+    if (!["pending", "received"].includes(body.status)) fail(400, "Reservation status must be pending or received.");
+    const pharmacy = data.pharmacies.find((item) => item.ownerId === current.id);
+    if (!pharmacy) fail(404, "No pharmacy is associated with this account.");
+    const reservation = data.reservations.find((item) => item.id === decodeURIComponent(ownerReservationRoute[1]));
+    if (!reservation) fail(404, "Reservation not found.");
+    const listing = data.listings.find((item) => item.id === reservation.listingId && item.pharmacyId === pharmacy.id);
+    if (!listing || reservation.pharmacyId !== pharmacy.id) fail(404, "Reservation not found.");
+    const expectedCurrentStatus = body.status === "received" ? "pending" : "received";
+    if (reservation.status !== expectedCurrentStatus) fail(409, `Only ${expectedCurrentStatus} reservations can be changed to ${body.status}.`);
+    reservation.status = body.status;
+    audit(current.email, `reservation.${body.status}`, reservation.id);
+    await saveApplicationData();
+    send(200, { reservation });
     return true;
   }
 
