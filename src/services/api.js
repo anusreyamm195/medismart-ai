@@ -50,11 +50,12 @@ function matchesLocation(pharmacy, location) {
   return terms.some((term) => searchableLocation.includes(term));
 }
 
-export async function searchMedicines({ q = "", location = "", maxPrice = "", sort = "price-asc", latitude, longitude, radiusKm = 50 } = {}, currentUser = null) {
+export async function searchMedicines({ q = "", location = "", maxPrice = "", sort = "price-asc", latitude, longitude, radiusKm = 50, pharmacyId = "" } = {}, currentUser = null) {
   if (!supabase) {
     const params = new URLSearchParams();
     if (q.trim()) params.set("q", q.trim());
     if (location.trim()) params.set("location", location.trim());
+    if (pharmacyId) params.set("pharmacyId", pharmacyId);
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
       params.set("latitude", latitude);
       params.set("longitude", longitude);
@@ -107,7 +108,8 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
       const searchable = `${med.name} ${med.generic_name} ${med.category} ${pharm.name}`.toLowerCase();
 
       if (cleanQ && !searchable.includes(cleanQ)) return [];
-      if (cleanLoc && !matchesLocation(pharm, cleanLoc)) return [];
+      if (pharmacyId && pharm.id !== pharmacyId) return [];
+      if (cleanLoc && !(Number.isFinite(latitude) && Number.isFinite(longitude)) && !matchesLocation(pharm, cleanLoc)) return [];
       const price = Number(l.price);
       if (Number.isFinite(parsedMax) && price > parsedMax) return [];
       const distanceKm = Number.isFinite(latitude) && Number.isFinite(longitude)
@@ -160,6 +162,27 @@ export async function searchMedicines({ q = "", location = "", maxPrice = "", so
   }
 
   return { medicines: results, total: results.length };
+}
+
+export async function getApprovedPharmacies() {
+  if (!supabase) {
+    const { pharmacies } = await localRequest("/pharmacies");
+    return pharmacies.map((pharmacy) => ({
+      ...pharmacy,
+      id: pharmacy.id || pharmacy.pharmacyId,
+    }));
+  }
+
+  const { data, error } = await supabase
+    .from("pharmacies")
+    .select("id, name, location, address")
+    .eq("status", "approved")
+    .order("name");
+  if (error) throw new Error(error.message);
+  return (data || []).map((pharmacy) => ({
+    ...pharmacy,
+    id: pharmacy.id,
+  }));
 }
 
 export async function getMedicineDetails(medicineId) {
@@ -518,6 +541,49 @@ export async function reserveMedicine(userId, listingId, quantity = 1) {
 
   if (error) throw new Error(error.message);
   return { message: "Reservation placed. The pharmacy will hold your medicine.", reservation: data };
+}
+
+export async function getUserReservations(userId) {
+  if (!supabase) {
+    const { reservations } = await localRequest("/reservations");
+    return reservations;
+  }
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .select(`
+      id,
+      listing_id,
+      quantity,
+      status,
+      created_at,
+      listing:listings (
+        id,
+        medicine:medicines (name, generic_name),
+        pharmacy:pharmacies (id, name, location)
+      )
+    `)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data || []).map((reservation) => {
+    const listing = Array.isArray(reservation.listing) ? reservation.listing[0] : reservation.listing;
+    const medicine = Array.isArray(listing?.medicine) ? listing.medicine[0] : listing?.medicine;
+    const pharmacy = Array.isArray(listing?.pharmacy) ? listing.pharmacy[0] : listing?.pharmacy;
+    return {
+      id: reservation.id,
+      listingId: reservation.listing_id,
+      medicine: medicine?.name || "Medicine",
+      genericName: medicine?.generic_name || "",
+      pharmacy: pharmacy?.name || "Pharmacy",
+      pharmacyId: pharmacy?.id || null,
+      location: pharmacy?.location || "",
+      quantity: Number(reservation.quantity),
+      status: reservation.status,
+      createdAt: reservation.created_at,
+    };
+  });
 }
 
 export async function submitReport(userId, { type, details, subject }) {

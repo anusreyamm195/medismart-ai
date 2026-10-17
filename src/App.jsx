@@ -4,6 +4,7 @@ import "./medlytic.css";
 import StoreLocationPicker from "./components/StoreLocationPicker";
 import {
   searchMedicines,
+  getApprovedPharmacies,
   getMedicineDetails,
   signUpUser,
   loginUser,
@@ -13,6 +14,7 @@ import {
   updateProfile,
   getSearchHistory,
   getSavedPharmacies,
+  getUserReservations,
   savePharmacy as apiSavePharmacy,
   ratePharmacy as apiRatePharmacy,
   reserveMedicine as apiReserveMedicine,
@@ -79,6 +81,11 @@ function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("home");
   const [medicines, setMedicines] = useState([]);
+  const [pharmacyOptions, setPharmacyOptions] = useState([]);
+  const [pharmacyOptionsLoaded, setPharmacyOptionsLoaded] = useState(false);
+  const [pharmacyQuery, setPharmacyQuery] = useState("");
+  const [selectedPharmacyId, setSelectedPharmacyId] = useState("");
+  const [pharmacyMenuOpen, setPharmacyMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
   const [userCoordinates, setUserCoordinates] = useState(null);
@@ -104,11 +111,78 @@ function App() {
   const [detail, setDetail] = useState(null);
   const [history, setHistory] = useState([]);
   const [saved, setSaved] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [reservationsLoadedFor, setReservationsLoadedFor] = useState(null);
+  const [reservationCartOpen, setReservationCartOpen] = useState(false);
+  const [pendingReservation, setPendingReservation] = useState(null);
+  const [reservingListingId, setReservingListingId] = useState(null);
   const [profileData, setProfileData] = useState(null);
   const [ownerData, setOwnerData] = useState(null);
   const [adminData, setAdminData] = useState(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [reportTarget, setReportTarget] = useState(null);
+  const reservationUserId = user?.role === "patient" ? user.id : null;
+  const reservationsLoading = Boolean(reservationUserId && reservationsLoadedFor !== reservationUserId);
+
+  const completeReservation = useCallback(async (listing, userId) => {
+    setReservingListingId(listing.id);
+    try {
+      const result = await apiReserveMedicine(userId, listing.id, 1);
+      const optimisticReservation = {
+        id: result.reservation?.id || `reservation-${listing.id}-${Date.now()}`,
+        listingId: listing.id,
+        medicine: listing.name,
+        genericName: listing.genericName,
+        pharmacy: listing.pharmacy,
+        pharmacyId: listing.pharmacyId,
+        location: listing.location,
+        quantity: 1,
+        status: result.reservation?.status || "pending",
+        createdAt: new Date().toISOString(),
+      };
+      setReservations((current) => [optimisticReservation, ...current.filter((item) => item.id !== optimisticReservation.id)]);
+      setReservationCartOpen(true);
+      setNotice(result.message || "Medicine reserved.");
+      try {
+        setReservations(await getUserReservations(userId));
+        setReservationsLoadedFor(userId);
+      } catch (err) {
+        setReservationsLoadedFor(userId);
+        setError(`Reservation placed, but the cart could not be refreshed: ${err.message}`);
+      }
+    } catch (err) {
+      setError(err.message || "Failed to reserve medicine.");
+    } finally {
+      setReservingListingId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!reservationUserId) return undefined;
+    let active = true;
+    getUserReservations(reservationUserId)
+      .then((items) => {
+        if (!active) return;
+        setReservations(items);
+        setReservationsLoadedFor(reservationUserId);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(err.message || "Failed to load your reservations.");
+        setReservationsLoadedFor(reservationUserId);
+      });
+    return () => { active = false; };
+  }, [reservationUserId]);
+
+  const reservePendingAfterAuth = async (authenticatedUser) => {
+    if (!pendingReservation) return;
+    setPendingReservation(null);
+    if (authenticatedUser.role !== "patient") {
+      setError("Reservations are available with a patient account. Sign in as a patient to reserve this medicine.");
+      return;
+    }
+    await completeReservation(pendingReservation, authenticatedUser.id);
+  };
 
   const selectRegistrationLocation = async (coordinates) => {
     setRegistrationCoordinates(coordinates);
@@ -129,7 +203,7 @@ function App() {
     }
   };
 
-  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates, searchRadiusKm = radiusKm, searchSort = sort) => {
+  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates, searchRadiusKm = radiusKm, searchSort = sort, pharmacyFilterId = selectedPharmacyId) => {
     setLoading(true);
     setError("");
     try {
@@ -142,6 +216,7 @@ function App() {
           latitude: coordinates?.latitude,
           longitude: coordinates?.longitude,
           radiusKm: searchRadiusKm,
+          pharmacyId: pharmacyFilterId,
         },
         user
       );
@@ -152,18 +227,28 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [query, location, userCoordinates, maxPrice, sort, radiusKm, user]);
+  }, [query, location, userCoordinates, maxPrice, sort, radiusKm, user, selectedPharmacyId]);
 
   // Initial data loading & user session check
   useEffect(() => {
     searchMedicines({ sort: "price-asc" })
       .then((data) => setMedicines(data.medicines))
       .catch((err) => setError(err.message || "Failed to load catalogue."));
+    getApprovedPharmacies()
+      .then((pharmacies) => {
+        setPharmacyOptions(pharmacies);
+        setPharmacyOptionsLoaded(true);
+      })
+      .catch((err) => {
+        setError(err.message || "Failed to load pharmacy stores.");
+        setPharmacyOptionsLoaded(true);
+      });
 
     getCurrentUser()
       .then((currentUser) => {
         if (currentUser) {
           setUser(currentUser);
+          if (currentUser.role === "owner") setView("owner-dashboard");
         }
       })
       .catch(() => {
@@ -186,7 +271,7 @@ function App() {
       getProfile(user.id)
         .then((data) => setProfileData(data))
         .catch((err) => setError(err.message));
-    } else if (view === "owner") {
+    } else if (view === "owner" || view === "owner-dashboard") {
       getOwnerDashboard(user.id)
         .then(setOwnerData)
         .catch((err) => setError(err.message));
@@ -199,6 +284,10 @@ function App() {
 
   const handleSearch = async (event) => {
     event.preventDefault();
+    if (pharmacyQuery.trim() && !selectedPharmacyId) {
+      setError("Choose a pharmacy from the store list or clear the pharmacy filter.");
+      return;
+    }
     if (location.trim() && !userCoordinates) {
       setLoading(true);
       setError("");
@@ -217,6 +306,43 @@ function App() {
       return;
     }
     await search(query, location, userCoordinates, radiusKm, userCoordinates ? sort : "price-asc");
+  };
+
+  const visiblePharmacyOptions = pharmacyOptions.filter((pharmacy) => {
+    const searchTerm = pharmacyQuery.trim().toLowerCase();
+    return !searchTerm || `${pharmacy.name} ${pharmacy.location || ""}`.toLowerCase().includes(searchTerm);
+  });
+  const registeredPharmacyIds = new Set(pharmacyOptions.map((pharmacy) => pharmacy.id));
+  const registeredMedicines = medicines.filter((medicine) => registeredPharmacyIds.has(medicine.pharmacyId));
+
+  const choosePharmacy = async (pharmacy) => {
+    setSelectedPharmacyId(pharmacy.id);
+    setPharmacyQuery(pharmacy.name);
+    setPharmacyMenuOpen(false);
+    if (location.trim() && !userCoordinates) {
+      setLoading(true);
+      setError("");
+      try {
+        const coordinates = await geocodeLocation(location.trim());
+        setUserCoordinates(coordinates);
+        setSearchMapCenter(coordinates);
+        setRadiusKm(50);
+        setSort("distance-desc");
+        await search(query, location, coordinates, 50, "distance-desc", pharmacy.id);
+      } catch (err) {
+        setError(err.message || "Could not find medicines near that location.");
+        setLoading(false);
+      }
+      return;
+    }
+    search(query, location, userCoordinates, radiusKm, sort, pharmacy.id);
+  };
+
+  const clearPharmacyFilter = () => {
+    setSelectedPharmacyId("");
+    setPharmacyQuery("");
+    setPharmacyMenuOpen(false);
+    search(query, location, userCoordinates, radiusKm, sort, "");
   };
 
   const selectSearchLocation = async (coordinates) => {
@@ -286,9 +412,11 @@ function App() {
           password: payload.password,
         });
         setUser(data.user);
+        setView(data.user.role === "owner" ? "owner-dashboard" : "home");
         setAuthOpen(false);
         setNotice(data.message || `Welcome, ${data.user.name}.`);
         setError("");
+        await reservePendingAfterAuth(data.user);
       } else {
         if (authRole === "owner" && !registrationCoordinates) {
           throw new Error("Pin your store location on the map before creating an owner account.");
@@ -308,8 +436,10 @@ function App() {
           setAuthOpen(false);
         } else {
           setUser(data.user);
+          setView(data.user?.role === "owner" ? "owner-dashboard" : "home");
           setAuthOpen(false);
           setNotice(data.message || `Welcome, ${data.user?.name || ""}.`);
+          await reservePendingAfterAuth(data.user);
         }
         setError("");
       }
@@ -327,6 +457,9 @@ function App() {
       // Ignored
     }
     setUser(null);
+    setReservations([]);
+    setReservationsLoadedFor(null);
+    setReservationCartOpen(false);
     setView("home");
     setNotice("You have been signed out.");
   };
@@ -342,16 +475,17 @@ function App() {
 
   const reserveMedicine = async (listing) => {
     if (!user) {
+      setPendingReservation(listing);
       setAuthMode("login");
+      setAuthError("");
       setAuthOpen(true);
       return;
     }
-    try {
-      const data = await apiReserveMedicine(user.id, listing.id, 1);
-      setNotice(data.message);
-    } catch (err) {
-      setError(err.message || "Failed to reserve medicine.");
+    if (user.role !== "patient") {
+      setError("Reservations are available with a patient account.");
+      return;
     }
+    await completeReservation(listing, user.id);
   };
 
   const savePharmacy = async (pharmacyId) => {
@@ -406,18 +540,22 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}>
+        <a className="brand" href="/" onClick={(event) => { event.preventDefault(); setView(user?.role === "owner" ? "owner-dashboard" : "home"); }}>
           <span className="brand-mark">✚</span>
           <span>medlytic<span className="brand-dot">.</span><small>care, within reach</small></span>
         </a>
         <nav className="main-nav" aria-label="Main navigation">
-          <button className={view === "home" ? "nav-link active" : "nav-link"} onClick={() => setView("home")}>Find medicines</button>
+          {user?.role === "owner"
+            ? <>
+              <button className={view === "owner-dashboard" ? "nav-link active" : "nav-link"} onClick={() => setView("owner-dashboard")}>Owner dashboard</button>
+              <button className={view === "owner" ? "nav-link active" : "nav-link"} onClick={() => setView("owner")}>Store dashboard</button>
+            </>
+            : <button className={view === "home" ? "nav-link active" : "nav-link"} onClick={() => setView("home")}>Find medicines</button>}
           {user?.role === "patient" && <>
             <button className={view === "history" ? "nav-link active" : "nav-link"} onClick={() => setView("history")}>My searches</button>
             <button className={view === "saved" ? "nav-link active" : "nav-link"} onClick={() => setView("saved")}>Saved stores</button>
             <button className={view === "profile" ? "nav-link active" : "nav-link"} onClick={() => setView("profile")}>Profile</button>
           </>}
-          {user?.role === "owner" && <button className={view === "owner" ? "nav-link active" : "nav-link"} onClick={() => setView("owner")}>Store dashboard</button>}
           {user?.role === "admin" && <button className={view === "admin" ? "nav-link active" : "nav-link"} onClick={() => setView("admin")}>Admin dashboard</button>}
         </nav>
         <div className="account-actions">
@@ -468,6 +606,48 @@ function App() {
             <div className="section-heading">
               <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular near you"}</h2><p>{userCoordinates ? `In-stock medicines within ${radiusKm} km${sort === "distance-desc" ? ", farthest first." : sort === "distance-asc" ? ", closest first." : "."}` : "Prices and stock reported by listed pharmacies."}</p></div>
               <div className="result-controls">
+                <div className="pharmacy-filter">
+                  <label className="sort-control" htmlFor="pharmacy-filter-search">Pharmacy</label>
+                  <div className="pharmacy-picker">
+                    <input
+                      id="pharmacy-filter-search"
+                      type="search"
+                      role="combobox"
+                      aria-label="Search pharmacy stores"
+                      aria-expanded={pharmacyMenuOpen}
+                      aria-controls="pharmacy-filter-options"
+                      aria-autocomplete="list"
+                      placeholder="All stores"
+                      value={pharmacyQuery}
+                      onFocus={() => setPharmacyMenuOpen(true)}
+                      onChange={(event) => {
+                        setPharmacyQuery(event.target.value);
+                        setSelectedPharmacyId("");
+                        setPharmacyMenuOpen(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setPharmacyMenuOpen(false);
+                        if (event.key === "Enter" && pharmacyMenuOpen && visiblePharmacyOptions[0]) {
+                          event.preventDefault();
+                          choosePharmacy(visiblePharmacyOptions[0]);
+                        }
+                      }}
+                    />
+                    {selectedPharmacyId && <button type="button" className="pharmacy-filter-clear" aria-label="Clear pharmacy filter" onClick={clearPharmacyFilter}>×</button>}
+                    {pharmacyMenuOpen && <div className="pharmacy-picker-menu" id="pharmacy-filter-options" role="listbox">
+                      <button type="button" className="pharmacy-picker-option all-stores" role="option" aria-selected={!selectedPharmacyId} onMouseDown={(event) => event.preventDefault()} onClick={clearPharmacyFilter}>All pharmacies</button>
+                      {visiblePharmacyOptions.length ? visiblePharmacyOptions.map((pharmacy) => <button
+                        type="button"
+                        className="pharmacy-picker-option"
+                        role="option"
+                        aria-selected={selectedPharmacyId === pharmacy.id}
+                        key={pharmacy.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => choosePharmacy(pharmacy)}
+                      ><span>{pharmacy.name}</span><small>{pharmacy.location}</small></button>) : <p className="pharmacy-picker-empty">No matching pharmacies</p>}
+                    </div>}
+                  </div>
+                </div>
                 {userCoordinates && <label className="sort-control"><span>Within</span><select aria-label="Nearby search radius" value={radiusKm} onChange={(event) => {
                   const nextRadius = Number(event.target.value);
                   setRadiusKm(nextRadius);
@@ -479,9 +659,10 @@ function App() {
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-            {medicines.length ? <div className="medicine-grid">{medicines.map((medicine) =>
-              <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
-              : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
+            {!pharmacyOptionsLoaded ? <div className="empty-state"><span>⌕</span><h3>Loading registered pharmacies</h3><p>Checking approved pharmacy listings near you.</p></div>
+              : registeredMedicines.length ? <div className="medicine-grid">{registeredMedicines.map((medicine) =>
+              <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} reserving={reservingListingId === medicine.id} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
+              : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or location. Only approved registered pharmacy listings are shown.</p></div>}
           </section>
           <section className="how-section">
             <div><span className="eyebrow">SIMPLE BY DESIGN</span><h2>Good care starts with a good search.</h2></div>
@@ -491,11 +672,37 @@ function App() {
         {view === "history" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Recent medicine searches" sub="Pick up where you left off." />{history.length ? <div className="history-list">{history.map((item) => <button key={item.id} onClick={() => { setQuery(item.query); search(item.query); }}><span className="history-icon">⌕</span><span><b>{item.query}</b><small>{new Date(item.createdAt).toLocaleString()}</small></span><span className="history-arrow">↗</span></button>)}</div> : <EmptyDashboard text="Your searches will appear here after you look up a medicine." />}</section>}
         {view === "saved" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Saved pharmacies" sub="Keep trusted local stores close at hand." />{saved.length ? <div className="medicine-grid">{saved.map((pharmacy) => <PharmacyCard key={pharmacy.id} pharmacy={pharmacy} />)}</div> : <EmptyDashboard text="Save a pharmacy from any medicine result to see it here." />}</section>}
         {view === "profile" && <ProfilePanel key={profileData?.name || ""} profile={profileData} user={user} onChange={setUser} onError={setError} onNotice={setNotice} />}
+        {view === "owner-dashboard" && <OwnerOverview data={ownerData} onOpenStore={() => setView("owner")} />}
         {view === "owner" && <OwnerDashboard data={ownerData} user={user} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
         {view === "admin" && <AdminDashboard data={adminData} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
       </main>
 
       <footer className="site-footer"><a className="brand footer-brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}><span className="brand-mark">✚</span><span>medlytic<span className="brand-dot">.</span></span></a><span>Medicine information is for general awareness only. Always follow your clinician’s advice.</span><span>© 2026 Medlytic</span></footer>
+
+      {user?.role === "patient" && <>
+        <button className="reservation-cart-toggle" type="button" onClick={() => setReservationCartOpen(true)} aria-label={`Open reservations cart, ${reservations.length} reserved medicines`}>
+          <span aria-hidden="true">▣</span><span>My reservations</span><b>{reservations.reduce((total, item) => total + Number(item.quantity || 0), 0)}</b>
+        </button>
+        {reservationCartOpen && <div className="reservation-cart-layer">
+          <button className="reservation-cart-backdrop" type="button" aria-label="Close reservations cart" onClick={() => setReservationCartOpen(false)} />
+          <aside className="reservation-cart" role="dialog" aria-modal="true" aria-labelledby="reservation-cart-title">
+            <header className="reservation-cart-header">
+              <div><span className="eyebrow">YOUR REQUESTS</span><h2 id="reservation-cart-title">My reservations</h2><p>Medicine requests sent to your pharmacies.</p></div>
+              <button className="reservation-cart-close" type="button" onClick={() => setReservationCartOpen(false)} aria-label="Close reservations cart">×</button>
+            </header>
+            <div className="reservation-cart-body">
+              {reservationsLoading ? <p className="reservation-cart-message">Loading your reservations…</p>
+                : reservations.length ? reservations.map((item) => <article className="reservation-cart-item" key={item.id}>
+                  <div className="reservation-cart-medicine"><span aria-hidden="true">✚</span><div><b>{item.medicine}</b>{item.genericName && <small>{item.genericName}</small>}</div></div>
+                  <p className="reservation-cart-pharmacy">{item.pharmacy}{item.location ? ` · ${item.location}` : ""}</p>
+                  <div className="reservation-cart-item-meta"><span>Qty <b>{item.quantity}</b></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>
+                  {item.createdAt && <small className="reservation-cart-date">{new Date(item.createdAt).toLocaleDateString()}</small>}
+                </article>) : <div className="reservation-cart-empty"><span aria-hidden="true">▣</span><h3>No reservations yet</h3><p>Reserve an in-stock medicine and it will appear here.</p><button type="button" className="button button-primary button-small" onClick={() => { setReservationCartOpen(false); setView("home"); }}>Find medicines</button></div>}
+            </div>
+            {!!reservations.length && <footer className="reservation-cart-footer"><span>{reservations.length} {reservations.length === 1 ? "request" : "requests"} · {reservations.reduce((total, item) => total + Number(item.quantity || 0), 0)} items</span><button type="button" className="button button-outline button-small" onClick={() => setReservationCartOpen(false)}>Continue browsing</button></footer>}
+          </aside>
+        </div>}
+      </>}
 
       {authOpen && (
         <Modal
@@ -612,7 +819,7 @@ function App() {
   );
 }
 
-function MedicineCard({ medicine, userCoordinates, onDetails, onReserve, onSave, onRate }) {
+function MedicineCard({ medicine, userCoordinates, reserving, onDetails, onReserve, onSave, onRate }) {
   const [rating, setRating] = useState("5");
   const destination = Number.isFinite(medicine.latitude) && Number.isFinite(medicine.longitude)
     ? `${medicine.latitude},${medicine.longitude}`
@@ -625,9 +832,49 @@ function MedicineCard({ medicine, userCoordinates, onDetails, onReserve, onSave,
     <div className="pharmacy-summary"><span className="pharmacy-icon">⌂</span><span><b>{medicine.pharmacy}</b><small>⌖ {medicine.location}{Number.isFinite(medicine.distanceKm) ? ` · ${medicine.distanceKm.toFixed(1)} km away` : ""}</small></span><span className="rating">★ {medicine.rating}</span></div>
     <a className="map-link" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Get directions ↗</a>
     <div className="card-divider" /><div className="price-row"><span>Price per pack</span><strong>₹{medicine.price.toFixed(2)}</strong></div>
-    <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock} onClick={onReserve}>Reserve</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
+    <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock || reserving} onClick={onReserve}>{reserving ? "Reserving…" : "Reserve"}</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
     <div className="rate-control"><select aria-label={`Rating for ${medicine.pharmacy}`} value={rating} onChange={(event) => setRating(event.target.value)}><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select><button className="text-button rate-link" onClick={() => onRate(Number(rating))}>Rate pharmacy</button></div>
   </article>;
+}
+
+function OwnerOverview({ data, onOpenStore }) {
+  const listings = data?.listings || [];
+  const reservations = data?.reservations || [];
+  const counts = listings.reduce((result, listing) => {
+    const stock = Number(listing.stock);
+    result.total += 1;
+    if (stock === 0) result.out += 1;
+    else if (stock <= 5) result.low += 1;
+    else result.available += 1;
+    return result;
+  }, { total: 0, available: 0, low: 0, out: 0 });
+  const reservationCounts = reservations.reduce((result, reservation) => {
+    const status = String(reservation.status || "").toLowerCase().replace(/[\s-]+/g, "_");
+    if (status === "pending") result.pending += 1;
+    if (status === "ready" || status === "ready_for_pickup") result.ready += 1;
+    return result;
+  }, { pending: 0, ready: 0 });
+
+  return <section className="content-section dashboard-section">
+    <SectionTitle
+      eyebrow="PHARMACY PORTAL"
+      title="Owner dashboard"
+      sub={data?.pharmacy?.name ? `A live overview of ${data.pharmacy.name}.` : "A live overview of your pharmacy inventory and customer reservations."}
+    />
+    <div className="metric-grid owner-overview-grid">
+      <Metric label="Total medicine listings" value={counts.total} />
+      <Metric label="Available medicines" value={counts.available} />
+      <Metric label="Low-stock medicines" value={counts.low} />
+      <Metric label="Out-of-stock medicines" value={counts.out} />
+      <Metric label="Pending reservations" value={reservationCounts.pending} />
+      <Metric label="Reservations ready for pickup" value={reservationCounts.ready} />
+    </div>
+    <div className="panel owner-overview-note">
+      <h3>Manage your pharmacy</h3>
+      <p className="muted-copy">Open Store dashboard to add medicines, update stock, and review customer requests.</p>
+      <button className="button button-primary button-small" type="button" onClick={onOpenStore}>Open Store dashboard</button>
+    </div>
+  </section>;
 }
 
 function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
@@ -705,7 +952,6 @@ function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
   };
 
   return <section className="content-section dashboard-section"><SectionTitle eyebrow="PHARMACY PORTAL" title={data?.pharmacy?.name || "Store dashboard"} sub={data?.pharmacy?.status === "pending" ? "Your store is awaiting admin approval. You can prepare inventory while we review your registration." : "Manage your store listing, live inventory and customer requests."} />
-    <div className="metric-grid"><Metric label="Listed medicines" value={data?.stats?.listingCount ?? "—"} /><Metric label="In-stock items" value={data?.stats?.inStock ?? "—"} /><Metric label="Average rating" value={data?.stats?.rating ? `★ ${data.stats.rating}` : "—"} /></div>
     {data?.pharmacy && <StoreProfileEditor key={JSON.stringify(data.pharmacy)} pharmacy={data.pharmacy} user={user} onRefresh={onRefresh} onError={onError} onNotice={onNotice} />}
     <div className="dashboard-columns"><div className="panel"><h3>{editing ? "Edit medicine" : "Add a medicine"}</h3><form className="stack-form" onSubmit={submit}><label>Medicine name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Generic name<input required value={form.genericName} onChange={(e) => setForm({ ...form, genericName: e.target.value })} /></label><label>Category<input required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></label><div className="form-row"><label>Price (₹)<input type="number" min="0" step="0.01" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></label><label>Stock quantity<input type="number" min="0" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></label></div><button className="button button-primary" type="submit" disabled={submitting}>{submitting ? "Saving…" : (editing ? "Save changes" : "Add to inventory")}</button>{editing && <button className="text-button" type="button" onClick={() => { setEditing(null); setForm({ name: "", genericName: "", category: "", price: "", stock: "" }); }}>Cancel edit</button>}</form></div>
       <div className="panel"><h3>Customer requests</h3>{data?.reservations?.length ? data.reservations.map((item) => <div className="request-line" key={item.id}><span><b>{item.medicine}</b><small>{item.customer} · Qty {item.quantity}</small></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>) : <p className="muted-copy">Reservations for your listed medicines will appear here.</p>}</div></div>

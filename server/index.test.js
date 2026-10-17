@@ -171,6 +171,9 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
   assert.ok(cityResults.body.medicines.length > 0);
   assert.ok(cityResults.body.medicines.every((medicine) => medicine.location.includes("Bengaluru")));
   assert.ok(cityResults.body.medicines[0].distanceKm >= cityResults.body.medicines.at(-1).distanceKm);
+  const nearbyStore = await api("/medicines?location=Different%20city&latitude=12.935&longitude=77.624&radiusKm=50&pharmacyId=pharmacy-green-cross");
+  assert.ok(nearbyStore.body.medicines.length > 0);
+  assert.ok(nearbyStore.body.medicines.every((medicine) => medicine.pharmacyId === "pharmacy-green-cross"));
   const withinOneKm = await api("/medicines?latitude=12.9352&longitude=77.6245&radiusKm=1");
   assert.ok(withinOneKm.body.medicines.length > 0);
   assert.ok(withinOneKm.body.medicines.every((medicine) => medicine.pharmacy === "City Care Medicals" && medicine.stock > 0));
@@ -181,9 +184,17 @@ test("public medicine search returns prices, stock, and pharmacy data", async ()
 test("patients can reserve an available listing and see search history", async () => {
   const token = await login("patient@medlytic.local", "Patient123!");
   const listing = (await api("/medicines?q=Dolo", { token })).body.medicines.find((item) => item.stock > 0);
+  const applicationStateListings = testApi.data.listings.splice(0);
   const reservation = await api("/reservations", { token, method: "POST", body: JSON.stringify({ listingId: listing.id, quantity: 1 }) });
   assert.equal(reservation.status, 201);
   assert.equal(reservation.body.reservation.status, "pending");
+  const cart = await api("/reservations", { token });
+  assert.equal(cart.status, 200);
+  assert.equal(cart.body.reservations[0].id, reservation.body.reservation.id);
+  assert.equal(cart.body.reservations[0].medicine, listing.name);
+  assert.equal(cart.body.reservations[0].pharmacy, listing.pharmacy);
+  assert.equal(cart.body.reservations[0].quantity, 1);
+  testApi.data.listings.push(...applicationStateListings);
   const history = await api("/search-history", { token });
   assert.equal(history.status, 200);
   assert.equal(history.body.history[0].query, "Dolo");
@@ -221,6 +232,16 @@ test("owners can update only their inventory, while admins can approve store sig
     longitude: 77.583,
   }) });
   assert.equal(signup.status, 201);
+  const pendingListing = await api("/owner/medicines", { token: signup.body.token, method: "POST", body: JSON.stringify({
+    name: "Pending pharmacy test medicine",
+    genericName: "Test ingredient",
+    category: "Test",
+    price: "10",
+    stock: "5",
+  }) });
+  assert.equal(pendingListing.status, 201);
+  const hiddenPendingListing = await api("/medicines?q=Pending%20pharmacy%20test%20medicine");
+  assert.equal(hiddenPendingListing.body.medicines.length, 0);
   const adminToken = await login("admin@medlytic.local", "Admin123!");
   const pharmacies = await api("/admin/pharmacies", { token: adminToken });
   const pending = pharmacies.body.pharmacies.find((item) => item.name === "New Pharmacy");
@@ -229,6 +250,8 @@ test("owners can update only their inventory, while admins can approve store sig
   assert.equal(pending.longitude, 77.583);
   const approval = await api(`/admin/pharmacies/${pending.id}`, { token: adminToken, method: "PATCH", body: JSON.stringify({ status: "approved" }) });
   assert.equal(approval.status, 200);
+  const visibleAfterApproval = await api("/medicines?q=Pending%20pharmacy%20test%20medicine");
+  assert.equal(visibleAfterApproval.body.medicines.length, 1);
 });
 
 test("invalid inputs, missing authentication, and non-admin access are rejected", async () => {

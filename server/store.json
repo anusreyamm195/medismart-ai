@@ -1,0 +1,346 @@
+{
+  "users": [
+    {
+      "id": "user-admin",
+      "name": "Platform Admin",
+      "email": "admin@medlytic.local",
+      "passwordHash": "34c5b06249ac01d394f9934d65aa8d19:e4111f87b86cc15d24421d62711420a9c92864c9c7338485b68413a62385bc90590ade40f49051ec25c814da45b4c078c9656991a38ed3fdc4111a6882249c84",
+      "role": "admin",
+      "active": true
+    },
+    {
+      "id": "user-patient",
+      "name": "Aarav Sharma",
+      "email": "patient@medlytic.local",
+      "passwordHash": "3b2f837b661b2fae9893a5face4c0b96:e688c342f07f860e256f42388eff73a395424c7e4726d2fbeb2f111bc1081c6f384d81ef236e05b65ac75fba1f7b3d0037895d119482a7a6bfdb0d89d4b230dc",
+      "role": "patient",
+      "active": true
+    },
+    {
+      "id": "user-owner",
+      "name": "Maya Patel",
+      "email": "owner@medlytic.local",
+      "passwordHash": "f161086a8d6320984c84c4785dcbdaf5:3879f958497748c38548b82b4af0ad49b9e06b1ff37b57e5a4c125870466f8e7ab652e3455d2229d8a29c9ebbe7ef32639e5008704bab3fb2d6c5e06e5fe86a5",
+      "role": "owner",
+      "active": true
+    }
+  ],
+  "pharmacies": [
+    {
+      "id": "pharmacy-green-cross",
+      "ownerId": "user-owner",
+      "name": "Green Cross Pharmacy",
+      "location": "Indiranagar, Bengaluru",
+      "address": "12 100 Feet Road, Indiranagar, Bengaluru",
+      "phone": "+91 80 4000 1001",
+      "latitude": 12.9719,
+      "longitude": 77.6412,
+      "status": "approved",
+      "rating": 4.8,
+      "createdAt": "2026-10-13T12:08:52.662Z"
+    },
+    {
+      "id": "pharmacy-city-care",
+      "ownerId": null,
+      "name": "City Care Medicals",
+      "location": "Koramangala, Bengaluru",
+      "address": "80 Feet Road, Koramangala, Bengaluru",
+      "phone": "+91 80 4000 1002",
+      "latitude": 12.9352,
+      "longitude": 77.6245,
+      "status": "approved",
+      "rating": 4.5,
+      "createdAt": "2026-10-13T12:08:52.664Z"
+    },
+    {
+      "id": "pharmacy-wellness",
+      "ownerId": null,
+      "name": "Wellness Drugstore",
+      "location": "Whitefield, Bengaluru",
+      "address": "Main Road, Whitefield, Bengaluru",
+      "phone": "+91 80 4000 1003",
+      "latitude": 12.9698,
+      "longitude": 77.75,
+      "status": "approved",
+      "rating": 4.6,
+      "createdAt": "2026-10-13T12:08:52.664Z"
+    },
+    {
+      "id": "pharmacy-b991083523639385be",
+      "ownerId": "user-96e291baac9388f825",
+      "name": "Medical store",
+      "location": "J.P Nagar, Bengaluru",
+      "address": "J.P Nagar, Bengaluru",
+      "phone": "Not provided",
+      "latitude": 12.916914643067335,
+      "longitude": 77.59718506043791,
+      "status": "pending",
+      "rating": 0,
+      "createdAt": "2026-10-13T12:44:54.463Z"
+    },
+    {
+      "id": "pharmacy-11d6373ec345e9487c",
+      "ownerId": "user-65db50698d3907d954",
+      "name": "Medical Store",
+      "location": "J.P Nagar, Bengaluru",
+      "address": "J.P Nagar, Bengaluru",
+      "phone": "Not provided",
+      "latitude": 12.916936353575883,
+      "longitude": 77.59710843229541,
+      "status": "pending",
+      "rating": 0,
+      "createdAt": "2026-10-13T12:55:08.044Z"
+    },
+    {
+      "id": "pharmacy-4cf82e07f5b52f038b",
+      "ownerId": "user-05576e2f736c0d4e98",
+      "name": "MEdical Store",
+      "location": "J.P Nagar, Bengaluru",
+      "address": "J.P Nagar, Bengaluru",
+      "phone": "Not provided",
+      "latitude": 12.916918025699006,
+      "longitude": 77.5970986348665,
+      "status": "pending",
+      "rating": 0,
+      "createdAt": "2026-10-13T13:01:19.642Z"
+    }
+  ],
+  "medicines": [
+    {
+      "id": "med-paracetamol",
+      "name": "Dolo 650",
+      "genericName": "Paracetamol 650 mg",
+      "category": "Pain relief",
+      "info": "Paracetamol is commonly used for pain and fever. Follow the package directions and avoid taking multiple products that contain paracetamol."
+    },
+    {
+      "id": "med-calpol",
+      "name": "Calpol 650",
+      "genericName": "Paracetamol 650 mg",
+      "category": "Pain relief",
+      "info": "Paracetamol is commonly used for pain and fever. Follow the package directions and avoid taking multiple products that contain paracetamol."
+    },
+    {
+      "id": "med-ibuprofen",
+      "name": "Brufen 400",
+      "genericName": "Ibuprofen 400 mg",
+      "category": "Pain relief",
+      "info": "Ibuprofen is a non-steroidal anti-inflammatory medicine. It may not be suitable for everyone; ask a clinician or pharmacist if you have other conditions or take other medicines."
+    },
+    {
+      "id": "med-cetirizine",
+      "name": "Cetzine 10",
+      "genericName": "Cetirizine 10 mg",
+      "category": "Allergy relief",
+      "info": "Cetirizine is an antihistamine used to relieve allergy symptoms. It can cause drowsiness in some people."
+    },
+    {
+      "id": "med-vitamin-c",
+      "name": "Limcee 500",
+      "genericName": "Vitamin C 500 mg",
+      "category": "Vitamins",
+      "info": "Vitamin C is a dietary supplement. Follow label directions and ask a health professional whether a supplement is right for you."
+    },
+    {
+      "id": "med-omeprazole",
+      "name": "Omez 20",
+      "genericName": "Omeprazole 20 mg",
+      "category": "Digestive health",
+      "info": "Omeprazole reduces stomach acid. Seek professional advice about persistent symptoms or long-term use."
+    },
+    {
+      "id": "medicine-58f1efc1308aea3932",
+      "name": "Yahoo",
+      "genericName": "Paracetamol",
+      "category": "Nothing",
+      "info": ""
+    },
+    {
+      "id": "medicine-8c9a8ece347802303f",
+      "name": "Paracetamol",
+      "genericName": "Nothing",
+      "category": "abcs",
+      "info": ""
+    },
+    {
+      "id": "medicine-30ee590927b8639190",
+      "name": "Nothing",
+      "genericName": "adsf",
+      "category": "asdf",
+      "info": ""
+    }
+  ],
+  "listings": [
+    {
+      "id": "listing-1",
+      "medicineId": "med-paracetamol",
+      "pharmacyId": "pharmacy-green-cross",
+      "price": 30,
+      "stock": 42
+    },
+    {
+      "id": "listing-2",
+      "medicineId": "med-paracetamol",
+      "pharmacyId": "pharmacy-city-care",
+      "price": 32,
+      "stock": 18
+    },
+    {
+      "id": "listing-3",
+      "medicineId": "med-paracetamol",
+      "pharmacyId": "pharmacy-wellness",
+      "price": 28,
+      "stock": 0
+    },
+    {
+      "id": "listing-10",
+      "medicineId": "med-calpol",
+      "pharmacyId": "pharmacy-green-cross",
+      "price": 34,
+      "stock": 21
+    },
+    {
+      "id": "listing-4",
+      "medicineId": "med-ibuprofen",
+      "pharmacyId": "pharmacy-green-cross",
+      "price": 45,
+      "stock": 16
+    },
+    {
+      "id": "listing-5",
+      "medicineId": "med-ibuprofen",
+      "pharmacyId": "pharmacy-city-care",
+      "price": 42,
+      "stock": 25
+    },
+    {
+      "id": "listing-6",
+      "medicineId": "med-cetirizine",
+      "pharmacyId": "pharmacy-city-care",
+      "price": 22,
+      "stock": 31
+    },
+    {
+      "id": "listing-7",
+      "medicineId": "med-cetirizine",
+      "pharmacyId": "pharmacy-wellness",
+      "price": 24,
+      "stock": 12
+    },
+    {
+      "id": "listing-8",
+      "medicineId": "med-vitamin-c",
+      "pharmacyId": "pharmacy-green-cross",
+      "price": 18,
+      "stock": 60
+    },
+    {
+      "id": "listing-9",
+      "medicineId": "med-omeprazole",
+      "pharmacyId": "pharmacy-wellness",
+      "price": 56,
+      "stock": 9
+    },
+    {
+      "id": "listing-7e39178e48cef34862",
+      "medicineId": "medicine-58f1efc1308aea3932",
+      "pharmacyId": "pharmacy-11d6373ec345e9487c",
+      "price": 20000,
+      "stock": 10
+    },
+    {
+      "id": "listing-fe186e21a0bcf8eacd",
+      "medicineId": "medicine-8c9a8ece347802303f",
+      "pharmacyId": "pharmacy-4cf82e07f5b52f038b",
+      "price": 40,
+      "stock": 50
+    },
+    {
+      "id": "listing-980f4322f2e7e88129",
+      "medicineId": "medicine-30ee590927b8639190",
+      "pharmacyId": "pharmacy-4cf82e07f5b52f038b",
+      "price": 10,
+      "stock": 10
+    }
+  ],
+  "history": [],
+  "savedPharmacies": [],
+  "reservations": [
+    {
+      "id": "reservation-fcdf4b2ff067b6e4aa",
+      "userId": "user-564441e88d01ab507d",
+      "pharmacyId": "pharmacy-city-care",
+      "listingId": "listing-2",
+      "medicine": "Dolo 650",
+      "quantity": 1,
+      "status": "pending",
+      "createdAt": "2026-10-13T12:43:43.636Z"
+    }
+  ],
+  "reports": [],
+  "audit": [
+    {
+      "id": "audit-6c890f66ac8f6c3559",
+      "actor": "ankith+1@gmail.com",
+      "action": "inventory.created",
+      "target": "Nothing",
+      "createdAt": "2026-10-13T13:22:14.664Z"
+    },
+    {
+      "id": "audit-27b00991e2a292b665",
+      "actor": "ankith+1@gmail.com",
+      "action": "inventory.created",
+      "target": "Paracetamol",
+      "createdAt": "2026-10-13T13:02:06.567Z"
+    },
+    {
+      "id": "audit-83b527f8b5738b2a1c",
+      "actor": "ankith+1@gmail.com",
+      "action": "account.registered",
+      "target": "owner",
+      "createdAt": "2026-10-13T13:01:19.740Z"
+    },
+    {
+      "id": "audit-8c0e76ee7670e3821c",
+      "actor": "ankith+1@gmail.com",
+      "action": "inventory.updated",
+      "target": "Yahoo",
+      "createdAt": "2026-10-13T12:56:28.772Z"
+    },
+    {
+      "id": "audit-f5497e1a29eb59bd81",
+      "actor": "ankith+1@gmail.com",
+      "action": "inventory.created",
+      "target": "Yahoo",
+      "createdAt": "2026-10-13T12:55:34.865Z"
+    },
+    {
+      "id": "audit-b5e7fdd329c98bf3d0",
+      "actor": "ankith+1@gmail.com",
+      "action": "account.registered",
+      "target": "owner",
+      "createdAt": "2026-10-13T12:55:08.167Z"
+    },
+    {
+      "id": "audit-b30ea9b9969d39adf4",
+      "actor": "ankith+1@gmail.com",
+      "action": "account.registered",
+      "target": "owner",
+      "createdAt": "2026-10-13T12:44:54.563Z"
+    },
+    {
+      "id": "audit-8c8be56ae1962ff708",
+      "actor": "ankith@gmail.com",
+      "action": "reservation.created",
+      "target": "reservation-fcdf4b2ff067b6e4aa",
+      "createdAt": "2026-10-13T12:43:43.636Z"
+    },
+    {
+      "id": "audit-6edb1d7c7d6b343f74",
+      "actor": "ankith@gmail.com",
+      "action": "account.registered",
+      "target": "patient",
+      "createdAt": "2026-10-13T12:42:49.674Z"
+    }
+  ]
+}
