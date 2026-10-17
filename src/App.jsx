@@ -503,14 +503,8 @@ function App() {
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-<<<<<<< HEAD
             {medicines.length ? <div className="pharmacy-result-grid">{pharmacyResults.map(({ pharmacyId, listings }) =>
               <PharmacyResultCard key={pharmacyId} pharmacy={listings[0]} medicines={listings} userCoordinates={userCoordinates} onDetails={openMedicine} onReserve={reserveMedicine} onSave={() => savePharmacy(pharmacyId)} onRate={ratePharmacy} />)}</div>
-=======
-            {nearbySearchActive && <NearbyPharmacies pharmacies={nearbyPharmacies} location={nearbySearchLocation} coordinates={userCoordinates} />}
-            {medicines.length ? <div className="medicine-grid">{medicines.map((medicine) =>
-              <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={() => ratePharmacy(medicine.pharmacyId)} />)}</div>
->>>>>>> 0f4c55864b721b0b526d7ccc5ed41d43bc35ccf4
               : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
           </section>
           <section className="how-section">
