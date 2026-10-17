@@ -503,6 +503,7 @@ function App() {
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
+            {nearbySearchActive && <NearbyPharmacies pharmacies={nearbyPharmacies} location={nearbySearchLocation} coordinates={userCoordinates} />}
             {medicines.length ? <div className="pharmacy-result-grid">{pharmacyResults.map(({ pharmacyId, listings }) =>
               <PharmacyResultCard key={pharmacyId} pharmacy={listings[0]} medicines={listings} userCoordinates={userCoordinates} onDetails={openMedicine} onReserve={reserveMedicine} onSave={() => savePharmacy(pharmacyId)} onRate={ratePharmacy} />)}</div>
               : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
@@ -519,7 +520,7 @@ function App() {
         {view === "admin" && <AdminDashboard data={adminData} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
       </main>
 
-      {view === "home" && !authOpen && !detail && !reportTarget && <FloatingMedicineChatbot medicines={medicines} currentQuery={query} />}
+      {view === "home" && !authOpen && !detail && !reportTarget && <FloatingMedicineChatbot medicines={medicines} />}
 
       <footer className="site-footer"><a className="brand footer-brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}><span className="brand-mark">✚</span><span>medlytic<span className="brand-dot">.</span></span></a><span>Medicine information is for general awareness only. Always follow your clinician’s advice.</span><span>© 2026 Medlytic</span></footer>
 
@@ -707,6 +708,10 @@ function medicineChatReply(question, medicine, alternatives) {
   const normalized = question.toLowerCase();
   const description = medicine.info || "There is no detailed description in the catalogue yet.";
 
+  if (isSymptomQuestion(normalized)) return symptomSafetyReply(normalized);
+  if (/prescri|what medicine.*(?:take|use)|medicine.*(?:treat|cure)/.test(normalized)) {
+    return "I can’t prescribe or choose a medicine for you. The right treatment depends on the cause, your health history, and other medicines you may take. Please contact a qualified clinician or pharmacist.";
+  }
   if (/dose|dosage|how many|how much|when.*take|take.*when/.test(normalized)) {
     return "I can’t recommend a dose or schedule. The right directions depend on the person and product. Follow the package label and ask a pharmacist or clinician.";
   }
@@ -727,10 +732,147 @@ function medicineChatReply(question, medicine, alternatives) {
   return `${medicine.name}: ${description}`;
 }
 
+function isSymptomQuestion(question) {
+  return /\b(symptoms?|fever|cough|headache|pain|ache|nausea|vomiting|diarrhea|rash|dizziness|dizzy|fatigue|weakness|sore throat|breathless|shortness of breath|chest pain)\b/.test(question);
+}
+
+function symptomSafetyReply(question) {
+  if (/\b(chest pain|can't breathe|cannot breathe|difficulty breathing|shortness of breath|faint(?:ing)?|unconscious|confusion|severe bleeding|sudden weakness)\b/.test(question)
+    || /\bfever\b/.test(question) && /\b(stiff neck|neck stiffness|severe headache)\b/.test(question)) {
+    return "Possible causes range from less serious problems to urgent heart, lung, or other conditions; chat can’t tell which is responsible. Chest pain, trouble breathing, fainting, confusion, severe bleeding, or sudden weakness needs urgent assessment. Contact your local emergency service or go to the nearest emergency department now. I can’t diagnose or prescribe treatment.";
+  }
+
+  const possibleCauses = new Set();
+  if (/\bfever\b/.test(question)) {
+    possibleCauses.add("viral infections such as flu or COVID-19");
+    possibleCauses.add("other infections");
+  }
+  if (/\b(cough|sore throat)\b/.test(question)) {
+    possibleCauses.add("common respiratory infections");
+    if (/\b(cough)\b/.test(question)) possibleCauses.add("allergies or asthma");
+  }
+  if (/\b(headache)\b/.test(question)) {
+    possibleCauses.add("tension headache or migraine");
+    if (/\b(fever|cough|sore throat)\b/.test(question)) possibleCauses.add("an infection");
+    if (/\b(dizzy|dizziness|nausea|vomiting)\b/.test(question)) possibleCauses.add("dehydration");
+  }
+  if (/\b(nausea|vomiting|diarrhea)\b/.test(question)) {
+    possibleCauses.add("stomach or intestinal infections, including foodborne illness");
+    possibleCauses.add("medicine side effects or other digestive conditions");
+  }
+  if (/\b(rash)\b/.test(question)) {
+    possibleCauses.add("skin irritation or an allergic reaction");
+    possibleCauses.add("some viral infections");
+  }
+  if (/\b(dizzy|dizziness)\b/.test(question)) {
+    possibleCauses.add("dehydration, inner-ear problems, or a medicine effect");
+  }
+  if (/\b(fatigue|weakness)\b/.test(question)) {
+    possibleCauses.add("poor sleep, infection, anemia, or other conditions");
+  }
+  if (/\b(pain|ache)\b/.test(question) && possibleCauses.size === 0) {
+    possibleCauses.add("many different conditions, depending on where the pain is and what other symptoms occur");
+  }
+
+  const causes = possibleCauses.size
+    ? [...possibleCauses].join("; ")
+    : "many different conditions, depending on the exact symptoms";
+  return `Possible causes—not a diagnosis—include ${causes}. These symptoms can overlap across conditions, and this list may not include the cause. A clinician can assess your symptoms and decide whether any tests or treatment are needed. I can’t prescribe medicine; seek medical advice if symptoms are severe, worsening, or persistent.`;
+}
+
+function conditionMedicineReply(question) {
+  const asksForTreatment = /\b(medicine|medication|drug|treat(?:ment)?|what can i take|what should i take|suggest|recommend)\b/.test(question);
+  if (!asksForTreatment) return null;
+
+  if (/\b(common cold|common cold virus)\b/.test(question)) {
+    return "If a clinician has identified this as a common cold, usual symptom-relief options include paracetamol (acetaminophen) for fever or aches, and saline nasal spray for congestion. Honey may soothe cough for people over 1 year old. These do not cure the virus. Check with a pharmacist first—especially for children, pregnancy, other medicines, or health conditions—and follow the product label.";
+  }
+  if (/\b(influenza|the flu|flu)\b/.test(question)) {
+    return "For diagnosed influenza, a clinician can decide whether an antiviral prescription is appropriate, particularly if symptoms started recently or you are at higher risk. For fever or aches, paracetamol (acetaminophen) is a common non-prescription option for some people; ask a pharmacist whether it is safe for you and follow the label. Seek urgent care for breathing difficulty, chest pain, confusion, or severe worsening.";
+  }
+  if (/\b(covid(?:-19)?|coronavirus)\b/.test(question)) {
+    return "For diagnosed COVID-19, a clinician should assess whether a prescription antiviral is suitable, especially if you are at higher risk; it can have important timing, interaction, and eligibility requirements. For mild fever or aches, ask a pharmacist whether paracetamol (acetaminophen) is safe for you and follow the label. Seek urgent care for breathing difficulty, chest pain, confusion, or severe worsening.";
+  }
+  if (/\b(seasonal allergies|hay fever|allergic rhinitis|allerg(?:y|ies))\b/.test(question)) {
+    return "For diagnosed seasonal allergies, non-drowsy antihistamines such as cetirizine or loratadine, or a steroid nasal spray, are commonly used options. The best choice depends on your age, other medicines, pregnancy status, and health conditions; ask a pharmacist and follow the product label. This is general information, not a personal recommendation.";
+  }
+  if (/\b(migraine)\b/.test(question)) {
+    return "For a migraine already assessed by a clinician, some people use non-prescription paracetamol (acetaminophen) or ibuprofen early in an attack if those medicines are normally safe for them. A clinician can discuss migraine-specific prescription treatments and prevention. A sudden, unusually severe headache or headache with weakness, confusion, fever, or vision loss needs urgent assessment.";
+  }
+  if (/\b(heartburn|acid reflux|gastroesophageal reflux|gerd)\b/.test(question)) {
+    return "For occasional heartburn or diagnosed acid reflux, antacids or alginate products may provide short-term relief; a pharmacist can help choose one and check interactions. Frequent symptoms, difficulty swallowing, vomiting blood, or unexplained weight loss need medical assessment. Don’t use this chat to select long-term treatment.";
+  }
+  return null;
+}
+
+function normalizeMedicineName(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function findMedicineInventoryMatches(question, inventory) {
+  const normalizedQuestion = ` ${normalizeMedicineName(question)} `;
+  const products = new Map();
+  for (const listing of inventory) {
+    const key = normalizeMedicineName(listing.name || listing.medicineId || "");
+    const product = products.get(key) || { ...listing, listings: [] };
+    if (!product.info && listing.info) product.info = listing.info;
+    if ((listing.genericName || "").length > (product.genericName || "").length) product.genericName = listing.genericName;
+    if (!product.category && listing.category) product.category = listing.category;
+    product.listings.push(listing);
+    products.set(key, product);
+  }
+
+  const productList = [...products.values()];
+  const includesName = (product, field) => {
+    const name = normalizeMedicineName(product[field] || "");
+    return name.length > 1 && normalizedQuestion.includes(` ${name} `);
+  };
+  const namedProducts = productList.filter((product) => includesName(product, "name"));
+  const genericProducts = productList.filter((product) => includesName(product, "genericName"));
+  return namedProducts.length ? namedProducts : genericProducts;
+}
+
+function medicineInventoryReply(question, inventory) {
+  const matches = findMedicineInventoryMatches(question, inventory);
+  if (!matches.length) {
+    return "I couldn’t find that medicine in the current pharmacy catalogue. Try its full brand or generic name. I can only show availability reported by pharmacies listed in Medlytic.";
+  }
+
+  return matches.map((product) => {
+    const details = [
+      `Medicine: ${product.name}`,
+      product.genericName ? `Ingredient: ${product.genericName}` : "",
+      product.category ? `Category: ${product.category}` : "",
+      `Information: ${product.info || "No additional medicine information is available in the catalogue."}`,
+    ].filter(Boolean);
+    const listings = product.listings.slice(0, 5).map((listing) => {
+      const place = [...new Set([listing.location, listing.address].filter(Boolean))].join(" · ");
+      const stock = listing.stock > 0 ? `${listing.stock} in stock` : "Out of stock";
+      const contact = listing.phone && listing.phone.toLowerCase() !== "not provided" ? ` · Phone: ${listing.phone}` : "";
+      return `• ${listing.pharmacy || listing.name || "Listed pharmacy"}${place ? ` — ${place}` : ""}\n  ₹${Number(listing.price).toFixed(2)} · ${stock}${contact}`;
+    });
+    if (product.listings.length > listings.length) {
+      listings.push(`• ${product.listings.length - listings.length} more pharmacy listing(s)`);
+    }
+    return `${details.join("\n")}\n${listings.length ? `Pharmacy listings:\n${listings.join("\n")}` : "No pharmacy listings were found."}`;
+  }).join("\n\n");
+}
+
 function MedicineChatbot({ medicine, alternatives }) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
+  const messagesContainerRef = useRef(null);
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return undefined;
+    const scrollToLatest = () => { container.scrollTop = container.scrollHeight; };
+    const observer = new MutationObserver(scrollToLatest);
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+    scrollToLatest();
+    return () => observer.disconnect();
+  }, [open]);
 
   const ask = (text) => {
     const cleanQuestion = text.trim();
@@ -749,8 +891,8 @@ function MedicineChatbot({ medicine, alternatives }) {
     </button>
     {open && <div className="medicine-chat">
       <div className="medicine-chat-heading"><strong>Medlytic medicine assistant</strong><span>Catalog-based information, not medical advice.</span></div>
-      <div className="medicine-chat-messages" aria-live="polite" aria-relevant="additions">
-        {!messages.length && <p className="chat-welcome">Ask about {medicine.name}, its listed ingredient, or its catalog description.</p>}
+      <div className="medicine-chat-messages" ref={messagesContainerRef} aria-live="polite" aria-relevant="additions">
+        {!messages.length && <p className="chat-welcome">Ask about {medicine.name}, its listed ingredient, catalog details, or what to ask a clinician about symptoms.</p>}
         {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
       </div>
       <div className="medicine-chat-prompts">
@@ -766,49 +908,93 @@ function MedicineChatbot({ medicine, alternatives }) {
   </section>;
 }
 
-function FloatingMedicineChatbot({ medicines, currentQuery }) {
+function FloatingMedicineChatbot({ medicines }) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
+  const [sending, setSending] = useState(false);
+  const messagesContainerRef = useRef(null);
 
-  const ask = (text) => {
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return undefined;
+    const scrollToLatest = () => { container.scrollTop = container.scrollHeight; };
+    const observer = new MutationObserver(scrollToLatest);
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+    scrollToLatest();
+    return () => observer.disconnect();
+  }, [open]);
+
+  const ask = async (text) => {
     const cleanQuestion = text.trim();
-    if (!cleanQuestion) return;
+    if (!cleanQuestion || sending) return;
     const normalized = cleanQuestion.toLowerCase();
-    const findMedicine = (phrase) => medicines.find((item) =>
-      [item.name, item.genericName].some((term) => term && phrase.includes(term.toLowerCase()))
-    );
-    const selectedMedicine = findMedicine(normalized) || findMedicine(currentQuery.trim().toLowerCase());
-    const uniqueMedicines = [...new Map(medicines.map((item) => [item.medicineId || item.name, item])).values()];
-    const medicine = selectedMedicine || (uniqueMedicines.length === 1 ? uniqueMedicines[0] : null);
-    const answer = medicine
-      ? medicineChatReply(cleanQuestion, medicine, uniqueMedicines.filter((item) => item.genericName === medicine.genericName && item.name !== medicine.name).map((item) => item.name))
-      : "Which medicine would you like to know about? Include its name, for example, “What is Dolo 650 used for?”";
-
-    setMessages((current) => [
-      ...current,
-      { role: "user", text: cleanQuestion },
-      { role: "assistant", text: answer },
-    ]);
     setQuestion("");
+    setMessages((current) => [...current, { role: "user", text: cleanQuestion }]);
+    const conditionReply = conditionMedicineReply(normalized);
+    if (conditionReply) {
+      setMessages((current) => [...current, { role: "assistant", text: conditionReply }]);
+      return;
+    }
+    if (isSymptomQuestion(normalized)) {
+      setMessages((current) => [...current, { role: "assistant", text: symptomSafetyReply(normalized) }]);
+      return;
+    }
+    setSending(true);
+    try {
+      const { medicines: inventory } = await searchMedicines({ sort: "price-asc" });
+      const matchedProducts = findMedicineInventoryMatches(cleanQuestion, inventory);
+      let answer = medicineInventoryReply(cleanQuestion, inventory);
+      if (answer.startsWith("I couldn’t find that medicine")) {
+        const currentMatch = medicines.find((item) =>
+          [item.name, item.genericName].some((term) => term
+            && ` ${normalizeMedicineName(cleanQuestion)} `.includes(` ${normalizeMedicineName(term)} `))
+        );
+        if (currentMatch) {
+          answer = medicineChatReply(cleanQuestion, currentMatch, medicines
+            .filter((item) => item.genericName === currentMatch.genericName && item.name !== currentMatch.name)
+            .map((item) => item.name));
+        }
+      }
+      if (/\b(prescri|dose|dosage|how many|how much|side effect|safe|safety|reaction|allerg|replace|substitut|alternative|instead|interchange)\b/i.test(cleanQuestion)) {
+        const currentMatch = matchedProducts[0] || medicines.find((item) =>
+          [item.name, item.genericName].some((term) => term
+            && ` ${normalizeMedicineName(cleanQuestion)} `.includes(` ${normalizeMedicineName(term)} `))
+        );
+        if (currentMatch) {
+          const safetyAnswer = medicineChatReply(cleanQuestion, currentMatch, matchedProducts
+            .filter((item) => item.genericName === currentMatch.genericName && item.name !== currentMatch.name)
+            .map((item) => item.name));
+          if (!answer.includes(safetyAnswer)) answer = `${answer}\n\n${safetyAnswer}`;
+        }
+      }
+      setMessages((current) => [...current, { role: "assistant", text: answer }]);
+    } catch (error) {
+      setMessages((current) => [...current, {
+        role: "assistant",
+        text: `I couldn’t check current pharmacy listings. ${error.message || "Please try again."}`,
+      }]);
+    } finally {
+      setSending(false);
+    }
   };
 
   return <aside className="floating-medicine-chat" aria-label="Medicine assistant">
     {open && <section className="floating-chat-panel" role="dialog" aria-label="Ask about a medicine">
       <header className="floating-chat-header">
-        <div><strong>Medicine assistant</strong><small>Answers from Medlytic's medicine catalog</small></div>
+        <div><strong>Medicine assistant</strong><small>Catalog information and general guidance</small></div>
         <button className="floating-chat-close" type="button" aria-label="Close medicine assistant" onClick={() => setOpen(false)}>×</button>
       </header>
-      <div className="floating-chat-messages" aria-live="polite" aria-relevant="additions">
-        {!messages.length && <p className="chat-welcome">Ask about a medicine’s use, generic ingredient, or catalog details. Include its name for a specific answer.</p>}
+      <div className="floating-chat-messages" ref={messagesContainerRef} aria-live="polite" aria-relevant="additions">
+        {!messages.length && <p className="chat-welcome">Ask about a medicine, its ingredients, or general health questions. I can’t diagnose conditions or prescribe medicines.</p>}
         {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
       </div>
       <form className="medicine-chat-form floating-chat-form" onSubmit={(event) => { event.preventDefault(); ask(question); }}>
         <label className="sr-only" htmlFor="floating-medicine-question">Ask about a medicine</label>
-        <input id="floating-medicine-question" autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about a medicine…" maxLength="300" />
-        <button className="button button-primary button-small" type="submit" disabled={!question.trim()}>Send</button>
+        <input id="floating-medicine-question" autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about a medicine or symptoms…" maxLength="300" />
+        <button className="button button-primary button-small" type="submit" disabled={!question.trim() || sending}>{sending ? "Checking…" : "Send"}</button>
       </form>
-      <p className="floating-chat-disclaimer">General information only. For personal medical advice, contact a clinician.</p>
+      <p className="floating-chat-disclaimer">Not for diagnosis or prescriptions. For personal medical advice, contact a clinician.</p>
     </section>}
     <button className="floating-chat-launcher" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
       <span aria-hidden="true">✦</span>{open ? "Close chat" : "Ask about medicine"}
