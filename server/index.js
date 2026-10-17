@@ -210,17 +210,40 @@ function createAppServer({
         await saveApplicationData();
         return send(200, { message: "Saved pharmacy removed." });
       }
+      if (method === "GET" && pathname === "/api/reservations") {
+        const current = requireRole("patient");
+        const listings = await medicineRepository.findAll();
+        const reservations = data.reservations
+          .filter((item) => item.userId === current.id)
+          .map((reservation) => {
+            const listing = listings.find((item) => item.listingId === reservation.listingId || item.id === reservation.listingId);
+            const pharmacy = data.pharmacies.find((item) => item.id === (listing?.pharmacyId || reservation.pharmacyId));
+            return {
+              id: reservation.id,
+              listingId: reservation.listingId,
+              medicine: listing?.name || reservation.medicine || "Medicine",
+              genericName: listing?.genericName || "",
+              pharmacy: pharmacy?.name || "Pharmacy",
+              pharmacyId: pharmacy?.id || reservation.pharmacyId,
+              location: pharmacy?.location || "",
+              quantity: reservation.quantity,
+              status: reservation.status,
+              createdAt: reservation.createdAt,
+            };
+          });
+        return send(200, { reservations });
+      }
       if (method === "POST" && pathname === "/api/reservations") {
         const current = requireRole("patient");
-        const listing = data.listings.find((item) => item.id === body.listingId);
+        const listings = await medicineRepository.findAll();
+        const listing = listings.find((item) => item.listingId === body.listingId || item.id === body.listingId);
         if (!listing) fail(404, "Medicine listing not found.");
         const quantity = Number(body.quantity ?? 1);
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) fail(400, "Quantity must be between 1 and 20.");
-        if (listing.stock < quantity) fail(409, "There is not enough stock to reserve that quantity.");
-        const medicine = data.medicines.find((item) => item.id === listing.medicineId);
+        if (Number(listing.stock) < quantity) fail(409, "There is not enough stock to reserve that quantity.");
         const pharmacy = data.pharmacies.find((item) => item.id === listing.pharmacyId && item.status === "approved");
         if (!pharmacy) fail(404, "Pharmacy not found.");
-        const reservation = { id: id("reservation"), userId: current.id, pharmacyId: pharmacy.id, listingId: listing.id, medicine: medicine.name, quantity, status: "pending", createdAt: new Date().toISOString() };
+        const reservation = { id: id("reservation"), userId: current.id, pharmacyId: pharmacy.id, listingId: listing.listingId || listing.id, medicine: listing.name, quantity, status: "pending", createdAt: new Date().toISOString() };
         data.reservations.unshift(reservation);
         audit(current.email, "reservation.created", reservation.id);
         await saveApplicationData();

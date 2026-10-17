@@ -4,7 +4,6 @@ import "./medlytic.css";
 import StoreLocationPicker from "./components/StoreLocationPicker";
 import {
   searchMedicines,
-  getNearbyPharmacies,
   getMedicineDetails,
   signUpUser,
   loginUser,
@@ -14,6 +13,7 @@ import {
   updateProfile,
   getSearchHistory,
   getSavedPharmacies,
+  getUserReservations,
   savePharmacy as apiSavePharmacy,
   ratePharmacy as apiRatePharmacy,
   reserveMedicine as apiReserveMedicine,
@@ -90,9 +90,6 @@ function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("home");
   const [medicines, setMedicines] = useState([]);
-  const [nearbyPharmacies, setNearbyPharmacies] = useState([]);
-  const [nearbySearchLocation, setNearbySearchLocation] = useState("");
-  const [nearbySearchActive, setNearbySearchActive] = useState(false);
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
   const [userCoordinates, setUserCoordinates] = useState(null);
@@ -118,12 +115,16 @@ function App() {
   const [detail, setDetail] = useState(null);
   const [history, setHistory] = useState([]);
   const [saved, setSaved] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [reservationsLoadedFor, setReservationsLoadedFor] = useState(null);
+  const [reservationCartOpen, setReservationCartOpen] = useState(false);
+  const [pendingReservation, setPendingReservation] = useState(null);
+  const [reservingListingId, setReservingListingId] = useState(null);
   const [profileData, setProfileData] = useState(null);
   const [ownerData, setOwnerData] = useState(null);
   const [adminData, setAdminData] = useState(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [reportTarget, setReportTarget] = useState(null);
-  const pharmacyResults = groupMedicinesByPharmacy(medicines);
 
   const selectRegistrationLocation = async (coordinates) => {
     setRegistrationCoordinates(coordinates);
@@ -144,25 +145,22 @@ function App() {
     }
   };
 
-  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates, searchRadiusKm = radiusKm, searchSort = sort) => {
+  const search = useCallback(async (searchQuery = query, locationQuery = location, coordinates = userCoordinates, searchRadiusKm = radiusKm, searchSort = sort, pharmacyFilterId = selectedPharmacyId) => {
     setLoading(true);
     setError("");
     try {
-      const [data, pharmacyData] = await Promise.all([
-        searchMedicines(
-          {
-            q: searchQuery,
-            location: locationQuery,
-            maxPrice,
-            sort: searchSort,
-            latitude: coordinates?.latitude,
-            longitude: coordinates?.longitude,
-            radiusKm: searchRadiusKm,
-          },
-          user
-        ),
-        getNearbyPharmacies(locationQuery, coordinates),
-      ]);
+      const data = await searchMedicines(
+        {
+          q: searchQuery,
+          location: locationQuery,
+          maxPrice,
+          sort: searchSort,
+          latitude: coordinates?.latitude,
+          longitude: coordinates?.longitude,
+          radiusKm: searchRadiusKm,
+        },
+        user
+      );
       setMedicines(data.medicines);
       setNearbyPharmacies(pharmacyData);
       setNearbySearchLocation(locationQuery);
@@ -173,18 +171,28 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [query, location, userCoordinates, maxPrice, sort, radiusKm, user]);
+  }, [query, location, userCoordinates, maxPrice, sort, radiusKm, user, selectedPharmacyId]);
 
   // Initial data loading & user session check
   useEffect(() => {
     searchMedicines({ sort: "price-asc" })
       .then((data) => setMedicines(data.medicines))
       .catch((err) => setError(err.message || "Failed to load catalogue."));
+    getApprovedPharmacies()
+      .then((pharmacies) => {
+        setPharmacyOptions(pharmacies);
+        setPharmacyOptionsLoaded(true);
+      })
+      .catch((err) => {
+        setError(err.message || "Failed to load pharmacy stores.");
+        setPharmacyOptionsLoaded(true);
+      });
 
     getCurrentUser()
       .then((currentUser) => {
         if (currentUser) {
           setUser(currentUser);
+          if (currentUser.role === "owner") setView("owner-dashboard");
         }
       })
       .catch(() => {
@@ -207,7 +215,7 @@ function App() {
       getProfile(user.id)
         .then((data) => setProfileData(data))
         .catch((err) => setError(err.message));
-    } else if (view === "owner") {
+    } else if (view === "owner" || view === "owner-dashboard") {
       getOwnerDashboard(user.id)
         .then(setOwnerData)
         .catch((err) => setError(err.message));
@@ -220,6 +228,10 @@ function App() {
 
   const handleSearch = async (event) => {
     event.preventDefault();
+    if (pharmacyQuery.trim() && !selectedPharmacyId) {
+      setError("Choose a pharmacy from the store list or clear the pharmacy filter.");
+      return;
+    }
     if (location.trim() && !userCoordinates) {
       setLoading(true);
       setError("");
@@ -238,6 +250,43 @@ function App() {
       return;
     }
     await search(query, location, userCoordinates, radiusKm, userCoordinates ? sort : "price-asc");
+  };
+
+  const visiblePharmacyOptions = pharmacyOptions.filter((pharmacy) => {
+    const searchTerm = pharmacyQuery.trim().toLowerCase();
+    return !searchTerm || `${pharmacy.name} ${pharmacy.location || ""}`.toLowerCase().includes(searchTerm);
+  });
+  const registeredPharmacyIds = new Set(pharmacyOptions.map((pharmacy) => pharmacy.id));
+  const registeredMedicines = medicines.filter((medicine) => registeredPharmacyIds.has(medicine.pharmacyId));
+
+  const choosePharmacy = async (pharmacy) => {
+    setSelectedPharmacyId(pharmacy.id);
+    setPharmacyQuery(pharmacy.name);
+    setPharmacyMenuOpen(false);
+    if (location.trim() && !userCoordinates) {
+      setLoading(true);
+      setError("");
+      try {
+        const coordinates = await geocodeLocation(location.trim());
+        setUserCoordinates(coordinates);
+        setSearchMapCenter(coordinates);
+        setRadiusKm(50);
+        setSort("distance-desc");
+        await search(query, location, coordinates, 50, "distance-desc", pharmacy.id);
+      } catch (err) {
+        setError(err.message || "Could not find medicines near that location.");
+        setLoading(false);
+      }
+      return;
+    }
+    search(query, location, userCoordinates, radiusKm, sort, pharmacy.id);
+  };
+
+  const clearPharmacyFilter = () => {
+    setSelectedPharmacyId("");
+    setPharmacyQuery("");
+    setPharmacyMenuOpen(false);
+    search(query, location, userCoordinates, radiusKm, sort, "");
   };
 
   const selectSearchLocation = async (coordinates) => {
@@ -307,9 +356,11 @@ function App() {
           password: payload.password,
         });
         setUser(data.user);
+        setView(data.user.role === "owner" ? "owner-dashboard" : "home");
         setAuthOpen(false);
         setNotice(data.message || `Welcome, ${data.user.name}.`);
         setError("");
+        await reservePendingAfterAuth(data.user);
       } else {
         if (authRole === "owner" && !registrationCoordinates) {
           throw new Error("Pin your store location on the map before creating an owner account.");
@@ -329,8 +380,10 @@ function App() {
           setAuthOpen(false);
         } else {
           setUser(data.user);
+          setView(data.user?.role === "owner" ? "owner-dashboard" : "home");
           setAuthOpen(false);
           setNotice(data.message || `Welcome, ${data.user?.name || ""}.`);
+          await reservePendingAfterAuth(data.user);
         }
         setError("");
       }
@@ -348,6 +401,9 @@ function App() {
       // Ignored
     }
     setUser(null);
+    setReservations([]);
+    setReservationsLoadedFor(null);
+    setReservationCartOpen(false);
     setView("home");
     setNotice("You have been signed out.");
   };
@@ -363,16 +419,17 @@ function App() {
 
   const reserveMedicine = async (listing) => {
     if (!user) {
+      setPendingReservation(listing);
       setAuthMode("login");
+      setAuthError("");
       setAuthOpen(true);
       return;
     }
-    try {
-      const data = await apiReserveMedicine(user.id, listing.id, 1);
-      setNotice(data.message);
-    } catch (err) {
-      setError(err.message || "Failed to reserve medicine.");
+    if (user.role !== "patient") {
+      setError("Reservations are available with a patient account.");
+      return;
     }
+    await completeReservation(listing, user.id);
   };
 
   const savePharmacy = async (pharmacyId) => {
@@ -427,18 +484,22 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}>
+        <a className="brand" href="/" onClick={(event) => { event.preventDefault(); setView(user?.role === "owner" ? "owner-dashboard" : "home"); }}>
           <span className="brand-mark">✚</span>
           <span>medlytic<span className="brand-dot">.</span><small>care, within reach</small></span>
         </a>
         <nav className="main-nav" aria-label="Main navigation">
-          <button className={view === "home" ? "nav-link active" : "nav-link"} onClick={() => setView("home")}>Find medicines</button>
+          {user?.role === "owner"
+            ? <>
+              <button className={view === "owner-dashboard" ? "nav-link active" : "nav-link"} onClick={() => setView("owner-dashboard")}>Owner dashboard</button>
+              <button className={view === "owner" ? "nav-link active" : "nav-link"} onClick={() => setView("owner")}>Store dashboard</button>
+            </>
+            : <button className={view === "home" ? "nav-link active" : "nav-link"} onClick={() => setView("home")}>Find medicines</button>}
           {user?.role === "patient" && <>
             <button className={view === "history" ? "nav-link active" : "nav-link"} onClick={() => setView("history")}>My searches</button>
             <button className={view === "saved" ? "nav-link active" : "nav-link"} onClick={() => setView("saved")}>Saved stores</button>
             <button className={view === "profile" ? "nav-link active" : "nav-link"} onClick={() => setView("profile")}>Profile</button>
           </>}
-          {user?.role === "owner" && <button className={view === "owner" ? "nav-link active" : "nav-link"} onClick={() => setView("owner")}>Store dashboard</button>}
           {user?.role === "admin" && <button className={view === "admin" ? "nav-link active" : "nav-link"} onClick={() => setView("admin")}>Admin dashboard</button>}
         </nav>
         <div className="account-actions">
@@ -492,6 +553,48 @@ function App() {
             <div className="section-heading">
               <div><span className="eyebrow">LOCAL AVAILABILITY</span><h2>{query ? `Results for “${query}”` : "Popular medicines"}</h2><p>{userCoordinates ? `In-stock medicines within ${radiusKm} km by road${sort === "distance-desc" ? ", farthest first." : sort === "distance-asc" ? ", closest first." : "."}` : "Prices and stock reported by listed pharmacies."}</p></div>
               <div className="result-controls">
+                <div className="pharmacy-filter">
+                  <label className="sort-control" htmlFor="pharmacy-filter-search">Pharmacy</label>
+                  <div className="pharmacy-picker">
+                    <input
+                      id="pharmacy-filter-search"
+                      type="search"
+                      role="combobox"
+                      aria-label="Search pharmacy stores"
+                      aria-expanded={pharmacyMenuOpen}
+                      aria-controls="pharmacy-filter-options"
+                      aria-autocomplete="list"
+                      placeholder="All stores"
+                      value={pharmacyQuery}
+                      onFocus={() => setPharmacyMenuOpen(true)}
+                      onChange={(event) => {
+                        setPharmacyQuery(event.target.value);
+                        setSelectedPharmacyId("");
+                        setPharmacyMenuOpen(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") setPharmacyMenuOpen(false);
+                        if (event.key === "Enter" && pharmacyMenuOpen && visiblePharmacyOptions[0]) {
+                          event.preventDefault();
+                          choosePharmacy(visiblePharmacyOptions[0]);
+                        }
+                      }}
+                    />
+                    {selectedPharmacyId && <button type="button" className="pharmacy-filter-clear" aria-label="Clear pharmacy filter" onClick={clearPharmacyFilter}>×</button>}
+                    {pharmacyMenuOpen && <div className="pharmacy-picker-menu" id="pharmacy-filter-options" role="listbox">
+                      <button type="button" className="pharmacy-picker-option all-stores" role="option" aria-selected={!selectedPharmacyId} onMouseDown={(event) => event.preventDefault()} onClick={clearPharmacyFilter}>All pharmacies</button>
+                      {visiblePharmacyOptions.length ? visiblePharmacyOptions.map((pharmacy) => <button
+                        type="button"
+                        className="pharmacy-picker-option"
+                        role="option"
+                        aria-selected={selectedPharmacyId === pharmacy.id}
+                        key={pharmacy.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => choosePharmacy(pharmacy)}
+                      ><span>{pharmacy.name}</span><small>{pharmacy.location}</small></button>) : <p className="pharmacy-picker-empty">No matching pharmacies</p>}
+                    </div>}
+                  </div>
+                </div>
                 {userCoordinates && <label className="sort-control"><span>Within</span><select aria-label="Nearby search radius" value={radiusKm} onChange={(event) => {
                   const nextRadius = Number(event.target.value);
                   setRadiusKm(nextRadius);
@@ -503,7 +606,6 @@ function App() {
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-            {nearbySearchActive && <NearbyPharmacies pharmacies={nearbyPharmacies} location={nearbySearchLocation} coordinates={userCoordinates} />}
             {medicines.length ? <div className="pharmacy-result-grid">{pharmacyResults.map(({ pharmacyId, listings }) =>
               <PharmacyResultCard key={pharmacyId} pharmacy={listings[0]} medicines={listings} userCoordinates={userCoordinates} onDetails={openMedicine} onReserve={reserveMedicine} onSave={() => savePharmacy(pharmacyId)} onRate={ratePharmacy} />)}</div>
               : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
@@ -516,6 +618,7 @@ function App() {
         {view === "history" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Recent medicine searches" sub="Pick up where you left off." />{history.length ? <div className="history-list">{history.map((item) => <button key={item.id} onClick={() => { setQuery(item.query); search(item.query); }}><span className="history-icon">⌕</span><span><b>{item.query}</b><small>{new Date(item.createdAt).toLocaleString()}</small></span><span className="history-arrow">↗</span></button>)}</div> : <EmptyDashboard text="Your searches will appear here after you look up a medicine." />}</section>}
         {view === "saved" && <section className="content-section dashboard-section"><SectionTitle eyebrow="YOUR ACCOUNT" title="Saved pharmacies" sub="Keep trusted local stores close at hand." />{saved.length ? <div className="medicine-grid">{saved.map((pharmacy) => <PharmacyCard key={pharmacy.id} pharmacy={pharmacy} />)}</div> : <EmptyDashboard text="Save a pharmacy from any medicine result to see it here." />}</section>}
         {view === "profile" && <ProfilePanel key={profileData?.name || ""} profile={profileData} user={user} onChange={setUser} onError={setError} onNotice={setNotice} />}
+        {view === "owner-dashboard" && <OwnerOverview data={ownerData} onOpenStore={() => setView("owner")} />}
         {view === "owner" && <OwnerDashboard data={ownerData} user={user} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
         {view === "admin" && <AdminDashboard data={adminData} currentAdminId={user?.id} onRefresh={() => setRefreshVersion((version) => version + 1)} onError={setError} onNotice={setNotice} />}
       </main>
@@ -523,6 +626,31 @@ function App() {
       {view === "home" && !authOpen && !detail && !reportTarget && <FloatingMedicineChatbot medicines={medicines} />}
 
       <footer className="site-footer"><a className="brand footer-brand" href="/" onClick={(event) => { event.preventDefault(); setView("home"); }}><span className="brand-mark">✚</span><span>medlytic<span className="brand-dot">.</span></span></a><span>Medicine information is for general awareness only. Always follow your clinician’s advice.</span><span>© 2026 Medlytic</span></footer>
+
+      {user?.role === "patient" && <>
+        <button className="reservation-cart-toggle" type="button" onClick={() => setReservationCartOpen(true)} aria-label={`Open reservations cart, ${reservations.length} reserved medicines`}>
+          <span aria-hidden="true">▣</span><span>My reservations</span><b>{reservations.reduce((total, item) => total + Number(item.quantity || 0), 0)}</b>
+        </button>
+        {reservationCartOpen && <div className="reservation-cart-layer">
+          <button className="reservation-cart-backdrop" type="button" aria-label="Close reservations cart" onClick={() => setReservationCartOpen(false)} />
+          <aside className="reservation-cart" role="dialog" aria-modal="true" aria-labelledby="reservation-cart-title">
+            <header className="reservation-cart-header">
+              <div><span className="eyebrow">YOUR REQUESTS</span><h2 id="reservation-cart-title">My reservations</h2><p>Medicine requests sent to your pharmacies.</p></div>
+              <button className="reservation-cart-close" type="button" onClick={() => setReservationCartOpen(false)} aria-label="Close reservations cart">×</button>
+            </header>
+            <div className="reservation-cart-body">
+              {reservationsLoading ? <p className="reservation-cart-message">Loading your reservations…</p>
+                : reservations.length ? reservations.map((item) => <article className="reservation-cart-item" key={item.id}>
+                  <div className="reservation-cart-medicine"><span aria-hidden="true">✚</span><div><b>{item.medicine}</b>{item.genericName && <small>{item.genericName}</small>}</div></div>
+                  <p className="reservation-cart-pharmacy">{item.pharmacy}{item.location ? ` · ${item.location}` : ""}</p>
+                  <div className="reservation-cart-item-meta"><span>Qty <b>{item.quantity}</b></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>
+                  {item.createdAt && <small className="reservation-cart-date">{new Date(item.createdAt).toLocaleDateString()}</small>}
+                </article>) : <div className="reservation-cart-empty"><span aria-hidden="true">▣</span><h3>No reservations yet</h3><p>Reserve an in-stock medicine and it will appear here.</p><button type="button" className="button button-primary button-small" onClick={() => { setReservationCartOpen(false); setView("home"); }}>Find medicines</button></div>}
+            </div>
+            {!!reservations.length && <footer className="reservation-cart-footer"><span>{reservations.length} {reservations.length === 1 ? "request" : "requests"} · {reservations.reduce((total, item) => total + Number(item.quantity || 0), 0)} items</span><button type="button" className="button button-outline button-small" onClick={() => setReservationCartOpen(false)}>Continue browsing</button></footer>}
+          </aside>
+        </div>}
+      </>}
 
       {authOpen && (
         <Modal
@@ -669,38 +797,21 @@ function App() {
   );
 }
 
-function PharmacyResultCard({ pharmacy, medicines, userCoordinates, onDetails, onReserve, onSave, onRate }) {
+function MedicineCard({ medicine, userCoordinates, onDetails, onReserve, onSave, onRate }) {
   const [rating, setRating] = useState("5");
   const destination = Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
     ? `${pharmacy.latitude},${pharmacy.longitude}`
     : pharmacy.address || pharmacy.location;
   const directions = new URLSearchParams({ api: "1", destination });
   if (userCoordinates) directions.set("origin", `${userCoordinates.latitude},${userCoordinates.longitude}`);
-  return <article className="pharmacy-result-card">
-    <header className="pharmacy-result-header">
-      <span className="pharmacy-icon">⌂</span>
-      <div className="pharmacy-result-info">
-        <h3>{pharmacy.pharmacy}</h3>
-        <p>{Number.isFinite(pharmacy.distanceKm) ? `${pharmacy.distanceKm.toFixed(2)} km by road` : "Road distance unavailable"}</p>
-        <small>{pharmacy.location}</small>
-      </div>
-      <button className="icon-button" onClick={onSave} aria-label={`Save ${pharmacy.pharmacy}`}>♡</button>
-    </header>
-    <a className="map-link pharmacy-directions" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Get directions ↗</a>
-    <div className="pharmacy-result-medicines">
-      {medicines.map((medicine) => <div className="pharmacy-medicine-row" key={medicine.id}>
-        <div className="pharmacy-medicine-info">
-          <b>{medicine.name}</b>
-          <small>{medicine.genericName} · {medicine.stock > 0 ? `${medicine.stock} in stock` : "Out of stock"}</small>
-        </div>
-        <strong>₹{medicine.price.toFixed(2)}</strong>
-        <div className="pharmacy-medicine-actions">
-          <button className="button button-outline" onClick={() => onDetails(medicine)}>Details</button>
-          <button className="button button-primary" disabled={!medicine.stock} onClick={() => onReserve(medicine)}>Reserve</button>
-        </div>
-      </div>)}
-    </div>
-    <div className="rate-control"><select aria-label={`Rating for ${pharmacy.pharmacy}`} value={rating} onChange={(event) => setRating(event.target.value)}><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select><button className="text-button rate-link" onClick={() => onRate(Number(rating))}>Rate pharmacy</button><span className="rating">★ {pharmacy.rating}</span></div>
+  return <article className="medicine-card">
+    <div className="medicine-card-top"><span className="medicine-icon">✚</span><span className={medicine.stock > 0 ? "stock-pill" : "stock-pill out"}>{medicine.stock > 0 ? "In stock" : "Out of stock"}</span></div>
+    <div className="medicine-name"><h3>{medicine.name}</h3><p>{medicine.genericName} · {medicine.category}</p></div>
+    <div className="pharmacy-summary"><span className="pharmacy-icon">⌂</span><span><b>{medicine.pharmacy}</b><small>⌖ {medicine.location}{Number.isFinite(medicine.distanceKm) ? ` · ${medicine.distanceKm.toFixed(1)} km away` : ""}</small></span><span className="rating">★ {medicine.rating}</span></div>
+    <a className="map-link" href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">Get directions ↗</a>
+    <div className="card-divider" /><div className="price-row"><span>Price per pack</span><strong>₹{medicine.price.toFixed(2)}</strong></div>
+    <div className="card-actions"><button className="button button-primary" disabled={!medicine.stock} onClick={onReserve}>Reserve</button><button className="button button-outline" onClick={onDetails}>Details</button><button className="icon-button" onClick={onSave} aria-label={`Save ${medicine.pharmacy}`}>♡</button></div>
+    <div className="rate-control"><select aria-label={`Rating for ${medicine.pharmacy}`} value={rating} onChange={(event) => setRating(event.target.value)}><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select><button className="text-button rate-link" onClick={() => onRate(Number(rating))}>Rate pharmacy</button></div>
   </article>;
 }
 
@@ -708,10 +819,6 @@ function medicineChatReply(question, medicine, alternatives) {
   const normalized = question.toLowerCase();
   const description = medicine.info || "There is no detailed description in the catalogue yet.";
 
-  if (isSymptomQuestion(normalized)) return symptomSafetyReply(normalized);
-  if (/prescri|what medicine.*(?:take|use)|medicine.*(?:treat|cure)/.test(normalized)) {
-    return "I can’t prescribe or choose a medicine for you. The right treatment depends on the cause, your health history, and other medicines you may take. Please contact a qualified clinician or pharmacist.";
-  }
   if (/dose|dosage|how many|how much|when.*take|take.*when/.test(normalized)) {
     return "I can’t recommend a dose or schedule. The right directions depend on the person and product. Follow the package label and ask a pharmacist or clinician.";
   }
@@ -732,147 +839,10 @@ function medicineChatReply(question, medicine, alternatives) {
   return `${medicine.name}: ${description}`;
 }
 
-function isSymptomQuestion(question) {
-  return /\b(symptoms?|fever|cough|headache|pain|ache|nausea|vomiting|diarrhea|rash|dizziness|dizzy|fatigue|weakness|sore throat|breathless|shortness of breath|chest pain)\b/.test(question);
-}
-
-function symptomSafetyReply(question) {
-  if (/\b(chest pain|can't breathe|cannot breathe|difficulty breathing|shortness of breath|faint(?:ing)?|unconscious|confusion|severe bleeding|sudden weakness)\b/.test(question)
-    || /\bfever\b/.test(question) && /\b(stiff neck|neck stiffness|severe headache)\b/.test(question)) {
-    return "Possible causes range from less serious problems to urgent heart, lung, or other conditions; chat can’t tell which is responsible. Chest pain, trouble breathing, fainting, confusion, severe bleeding, or sudden weakness needs urgent assessment. Contact your local emergency service or go to the nearest emergency department now. I can’t diagnose or prescribe treatment.";
-  }
-
-  const possibleCauses = new Set();
-  if (/\bfever\b/.test(question)) {
-    possibleCauses.add("viral infections such as flu or COVID-19");
-    possibleCauses.add("other infections");
-  }
-  if (/\b(cough|sore throat)\b/.test(question)) {
-    possibleCauses.add("common respiratory infections");
-    if (/\b(cough)\b/.test(question)) possibleCauses.add("allergies or asthma");
-  }
-  if (/\b(headache)\b/.test(question)) {
-    possibleCauses.add("tension headache or migraine");
-    if (/\b(fever|cough|sore throat)\b/.test(question)) possibleCauses.add("an infection");
-    if (/\b(dizzy|dizziness|nausea|vomiting)\b/.test(question)) possibleCauses.add("dehydration");
-  }
-  if (/\b(nausea|vomiting|diarrhea)\b/.test(question)) {
-    possibleCauses.add("stomach or intestinal infections, including foodborne illness");
-    possibleCauses.add("medicine side effects or other digestive conditions");
-  }
-  if (/\b(rash)\b/.test(question)) {
-    possibleCauses.add("skin irritation or an allergic reaction");
-    possibleCauses.add("some viral infections");
-  }
-  if (/\b(dizzy|dizziness)\b/.test(question)) {
-    possibleCauses.add("dehydration, inner-ear problems, or a medicine effect");
-  }
-  if (/\b(fatigue|weakness)\b/.test(question)) {
-    possibleCauses.add("poor sleep, infection, anemia, or other conditions");
-  }
-  if (/\b(pain|ache)\b/.test(question) && possibleCauses.size === 0) {
-    possibleCauses.add("many different conditions, depending on where the pain is and what other symptoms occur");
-  }
-
-  const causes = possibleCauses.size
-    ? [...possibleCauses].join("; ")
-    : "many different conditions, depending on the exact symptoms";
-  return `Possible causes—not a diagnosis—include ${causes}. These symptoms can overlap across conditions, and this list may not include the cause. A clinician can assess your symptoms and decide whether any tests or treatment are needed. I can’t prescribe medicine; seek medical advice if symptoms are severe, worsening, or persistent.`;
-}
-
-function conditionMedicineReply(question) {
-  const asksForTreatment = /\b(medicine|medication|drug|treat(?:ment)?|what can i take|what should i take|suggest|recommend)\b/.test(question);
-  if (!asksForTreatment) return null;
-
-  if (/\b(common cold|common cold virus)\b/.test(question)) {
-    return "If a clinician has identified this as a common cold, usual symptom-relief options include paracetamol (acetaminophen) for fever or aches, and saline nasal spray for congestion. Honey may soothe cough for people over 1 year old. These do not cure the virus. Check with a pharmacist first—especially for children, pregnancy, other medicines, or health conditions—and follow the product label.";
-  }
-  if (/\b(influenza|the flu|flu)\b/.test(question)) {
-    return "For diagnosed influenza, a clinician can decide whether an antiviral prescription is appropriate, particularly if symptoms started recently or you are at higher risk. For fever or aches, paracetamol (acetaminophen) is a common non-prescription option for some people; ask a pharmacist whether it is safe for you and follow the label. Seek urgent care for breathing difficulty, chest pain, confusion, or severe worsening.";
-  }
-  if (/\b(covid(?:-19)?|coronavirus)\b/.test(question)) {
-    return "For diagnosed COVID-19, a clinician should assess whether a prescription antiviral is suitable, especially if you are at higher risk; it can have important timing, interaction, and eligibility requirements. For mild fever or aches, ask a pharmacist whether paracetamol (acetaminophen) is safe for you and follow the label. Seek urgent care for breathing difficulty, chest pain, confusion, or severe worsening.";
-  }
-  if (/\b(seasonal allergies|hay fever|allergic rhinitis|allerg(?:y|ies))\b/.test(question)) {
-    return "For diagnosed seasonal allergies, non-drowsy antihistamines such as cetirizine or loratadine, or a steroid nasal spray, are commonly used options. The best choice depends on your age, other medicines, pregnancy status, and health conditions; ask a pharmacist and follow the product label. This is general information, not a personal recommendation.";
-  }
-  if (/\b(migraine)\b/.test(question)) {
-    return "For a migraine already assessed by a clinician, some people use non-prescription paracetamol (acetaminophen) or ibuprofen early in an attack if those medicines are normally safe for them. A clinician can discuss migraine-specific prescription treatments and prevention. A sudden, unusually severe headache or headache with weakness, confusion, fever, or vision loss needs urgent assessment.";
-  }
-  if (/\b(heartburn|acid reflux|gastroesophageal reflux|gerd)\b/.test(question)) {
-    return "For occasional heartburn or diagnosed acid reflux, antacids or alginate products may provide short-term relief; a pharmacist can help choose one and check interactions. Frequent symptoms, difficulty swallowing, vomiting blood, or unexplained weight loss need medical assessment. Don’t use this chat to select long-term treatment.";
-  }
-  return null;
-}
-
-function normalizeMedicineName(value) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-function findMedicineInventoryMatches(question, inventory) {
-  const normalizedQuestion = ` ${normalizeMedicineName(question)} `;
-  const products = new Map();
-  for (const listing of inventory) {
-    const key = normalizeMedicineName(listing.name || listing.medicineId || "");
-    const product = products.get(key) || { ...listing, listings: [] };
-    if (!product.info && listing.info) product.info = listing.info;
-    if ((listing.genericName || "").length > (product.genericName || "").length) product.genericName = listing.genericName;
-    if (!product.category && listing.category) product.category = listing.category;
-    product.listings.push(listing);
-    products.set(key, product);
-  }
-
-  const productList = [...products.values()];
-  const includesName = (product, field) => {
-    const name = normalizeMedicineName(product[field] || "");
-    return name.length > 1 && normalizedQuestion.includes(` ${name} `);
-  };
-  const namedProducts = productList.filter((product) => includesName(product, "name"));
-  const genericProducts = productList.filter((product) => includesName(product, "genericName"));
-  return namedProducts.length ? namedProducts : genericProducts;
-}
-
-function medicineInventoryReply(question, inventory) {
-  const matches = findMedicineInventoryMatches(question, inventory);
-  if (!matches.length) {
-    return "I couldn’t find that medicine in the current pharmacy catalogue. Try its full brand or generic name. I can only show availability reported by pharmacies listed in Medlytic.";
-  }
-
-  return matches.map((product) => {
-    const details = [
-      `Medicine: ${product.name}`,
-      product.genericName ? `Ingredient: ${product.genericName}` : "",
-      product.category ? `Category: ${product.category}` : "",
-      `Information: ${product.info || "No additional medicine information is available in the catalogue."}`,
-    ].filter(Boolean);
-    const listings = product.listings.slice(0, 5).map((listing) => {
-      const place = [...new Set([listing.location, listing.address].filter(Boolean))].join(" · ");
-      const stock = listing.stock > 0 ? `${listing.stock} in stock` : "Out of stock";
-      const contact = listing.phone && listing.phone.toLowerCase() !== "not provided" ? ` · Phone: ${listing.phone}` : "";
-      return `• ${listing.pharmacy || listing.name || "Listed pharmacy"}${place ? ` — ${place}` : ""}\n  ₹${Number(listing.price).toFixed(2)} · ${stock}${contact}`;
-    });
-    if (product.listings.length > listings.length) {
-      listings.push(`• ${product.listings.length - listings.length} more pharmacy listing(s)`);
-    }
-    return `${details.join("\n")}\n${listings.length ? `Pharmacy listings:\n${listings.join("\n")}` : "No pharmacy listings were found."}`;
-  }).join("\n\n");
-}
-
 function MedicineChatbot({ medicine, alternatives }) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
-  const messagesContainerRef = useRef(null);
-
-  useEffect(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return undefined;
-    const scrollToLatest = () => { container.scrollTop = container.scrollHeight; };
-    const observer = new MutationObserver(scrollToLatest);
-    observer.observe(container, { childList: true, subtree: true, characterData: true });
-    scrollToLatest();
-    return () => observer.disconnect();
-  }, [open]);
 
   const ask = (text) => {
     const cleanQuestion = text.trim();
@@ -891,8 +861,8 @@ function MedicineChatbot({ medicine, alternatives }) {
     </button>
     {open && <div className="medicine-chat">
       <div className="medicine-chat-heading"><strong>Medlytic medicine assistant</strong><span>Catalog-based information, not medical advice.</span></div>
-      <div className="medicine-chat-messages" ref={messagesContainerRef} aria-live="polite" aria-relevant="additions">
-        {!messages.length && <p className="chat-welcome">Ask about {medicine.name}, its listed ingredient, catalog details, or what to ask a clinician about symptoms.</p>}
+      <div className="medicine-chat-messages" aria-live="polite" aria-relevant="additions">
+        {!messages.length && <p className="chat-welcome">Ask about {medicine.name}, its listed ingredient, or its catalog description.</p>}
         {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
       </div>
       <div className="medicine-chat-prompts">
@@ -908,93 +878,49 @@ function MedicineChatbot({ medicine, alternatives }) {
   </section>;
 }
 
-function FloatingMedicineChatbot({ medicines }) {
+function FloatingMedicineChatbot({ medicines, currentQuery }) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
-  const [sending, setSending] = useState(false);
-  const messagesContainerRef = useRef(null);
 
-  useEffect(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return undefined;
-    const scrollToLatest = () => { container.scrollTop = container.scrollHeight; };
-    const observer = new MutationObserver(scrollToLatest);
-    observer.observe(container, { childList: true, subtree: true, characterData: true });
-    scrollToLatest();
-    return () => observer.disconnect();
-  }, [open]);
-
-  const ask = async (text) => {
+  const ask = (text) => {
     const cleanQuestion = text.trim();
-    if (!cleanQuestion || sending) return;
+    if (!cleanQuestion) return;
     const normalized = cleanQuestion.toLowerCase();
+    const findMedicine = (phrase) => medicines.find((item) =>
+      [item.name, item.genericName].some((term) => term && phrase.includes(term.toLowerCase()))
+    );
+    const selectedMedicine = findMedicine(normalized) || findMedicine(currentQuery.trim().toLowerCase());
+    const uniqueMedicines = [...new Map(medicines.map((item) => [item.medicineId || item.name, item])).values()];
+    const medicine = selectedMedicine || (uniqueMedicines.length === 1 ? uniqueMedicines[0] : null);
+    const answer = medicine
+      ? medicineChatReply(cleanQuestion, medicine, uniqueMedicines.filter((item) => item.genericName === medicine.genericName && item.name !== medicine.name).map((item) => item.name))
+      : "Which medicine would you like to know about? Include its name, for example, “What is Dolo 650 used for?”";
+
+    setMessages((current) => [
+      ...current,
+      { role: "user", text: cleanQuestion },
+      { role: "assistant", text: answer },
+    ]);
     setQuestion("");
-    setMessages((current) => [...current, { role: "user", text: cleanQuestion }]);
-    const conditionReply = conditionMedicineReply(normalized);
-    if (conditionReply) {
-      setMessages((current) => [...current, { role: "assistant", text: conditionReply }]);
-      return;
-    }
-    if (isSymptomQuestion(normalized)) {
-      setMessages((current) => [...current, { role: "assistant", text: symptomSafetyReply(normalized) }]);
-      return;
-    }
-    setSending(true);
-    try {
-      const { medicines: inventory } = await searchMedicines({ sort: "price-asc" });
-      const matchedProducts = findMedicineInventoryMatches(cleanQuestion, inventory);
-      let answer = medicineInventoryReply(cleanQuestion, inventory);
-      if (answer.startsWith("I couldn’t find that medicine")) {
-        const currentMatch = medicines.find((item) =>
-          [item.name, item.genericName].some((term) => term
-            && ` ${normalizeMedicineName(cleanQuestion)} `.includes(` ${normalizeMedicineName(term)} `))
-        );
-        if (currentMatch) {
-          answer = medicineChatReply(cleanQuestion, currentMatch, medicines
-            .filter((item) => item.genericName === currentMatch.genericName && item.name !== currentMatch.name)
-            .map((item) => item.name));
-        }
-      }
-      if (/\b(prescri|dose|dosage|how many|how much|side effect|safe|safety|reaction|allerg|replace|substitut|alternative|instead|interchange)\b/i.test(cleanQuestion)) {
-        const currentMatch = matchedProducts[0] || medicines.find((item) =>
-          [item.name, item.genericName].some((term) => term
-            && ` ${normalizeMedicineName(cleanQuestion)} `.includes(` ${normalizeMedicineName(term)} `))
-        );
-        if (currentMatch) {
-          const safetyAnswer = medicineChatReply(cleanQuestion, currentMatch, matchedProducts
-            .filter((item) => item.genericName === currentMatch.genericName && item.name !== currentMatch.name)
-            .map((item) => item.name));
-          if (!answer.includes(safetyAnswer)) answer = `${answer}\n\n${safetyAnswer}`;
-        }
-      }
-      setMessages((current) => [...current, { role: "assistant", text: answer }]);
-    } catch (error) {
-      setMessages((current) => [...current, {
-        role: "assistant",
-        text: `I couldn’t check current pharmacy listings. ${error.message || "Please try again."}`,
-      }]);
-    } finally {
-      setSending(false);
-    }
   };
 
   return <aside className="floating-medicine-chat" aria-label="Medicine assistant">
     {open && <section className="floating-chat-panel" role="dialog" aria-label="Ask about a medicine">
       <header className="floating-chat-header">
-        <div><strong>Medicine assistant</strong><small>Catalog information and general guidance</small></div>
+        <div><strong>Medicine assistant</strong><small>Answers from Medlytic's medicine catalog</small></div>
         <button className="floating-chat-close" type="button" aria-label="Close medicine assistant" onClick={() => setOpen(false)}>×</button>
       </header>
-      <div className="floating-chat-messages" ref={messagesContainerRef} aria-live="polite" aria-relevant="additions">
-        {!messages.length && <p className="chat-welcome">Ask about a medicine, its ingredients, or general health questions. I can’t diagnose conditions or prescribe medicines.</p>}
+      <div className="floating-chat-messages" aria-live="polite" aria-relevant="additions">
+        {!messages.length && <p className="chat-welcome">Ask about a medicine’s use, generic ingredient, or catalog details. Include its name for a specific answer.</p>}
         {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
       </div>
       <form className="medicine-chat-form floating-chat-form" onSubmit={(event) => { event.preventDefault(); ask(question); }}>
         <label className="sr-only" htmlFor="floating-medicine-question">Ask about a medicine</label>
-        <input id="floating-medicine-question" autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about a medicine or symptoms…" maxLength="300" />
-        <button className="button button-primary button-small" type="submit" disabled={!question.trim() || sending}>{sending ? "Checking…" : "Send"}</button>
+        <input id="floating-medicine-question" autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about a medicine…" maxLength="300" />
+        <button className="button button-primary button-small" type="submit" disabled={!question.trim()}>Send</button>
       </form>
-      <p className="floating-chat-disclaimer">Not for diagnosis or prescriptions. For personal medical advice, contact a clinician.</p>
+      <p className="floating-chat-disclaimer">General information only. For personal medical advice, contact a clinician.</p>
     </section>}
     <button className="floating-chat-launcher" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
       <span aria-hidden="true">✦</span>{open ? "Close chat" : "Ask about medicine"}
@@ -1077,7 +1003,6 @@ function OwnerDashboard({ data, user, onRefresh, onError, onNotice }) {
   };
 
   return <section className="content-section dashboard-section"><SectionTitle eyebrow="PHARMACY PORTAL" title={data?.pharmacy?.name || "Store dashboard"} sub={data?.pharmacy?.status === "pending" ? "Your store is awaiting admin approval. You can prepare inventory while we review your registration." : "Manage your store listing, live inventory and customer requests."} />
-    <div className="metric-grid"><Metric label="Listed medicines" value={data?.stats?.listingCount ?? "—"} /><Metric label="In-stock items" value={data?.stats?.inStock ?? "—"} /><Metric label="Average rating" value={data?.stats?.rating ? `★ ${data.stats.rating}` : "—"} /></div>
     {data?.pharmacy && <StoreProfileEditor key={JSON.stringify(data.pharmacy)} pharmacy={data.pharmacy} user={user} onRefresh={onRefresh} onError={onError} onNotice={onNotice} />}
     <div className="dashboard-columns"><div className="panel"><h3>{editing ? "Edit medicine" : "Add a medicine"}</h3><form className="stack-form" onSubmit={submit}><label>Medicine name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Generic name<input required value={form.genericName} onChange={(e) => setForm({ ...form, genericName: e.target.value })} /></label><label>Category<input required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></label><div className="form-row"><label>Price (₹)<input type="number" min="0" step="0.01" required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></label><label>Stock quantity<input type="number" min="0" required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></label></div><button className="button button-primary" type="submit" disabled={submitting}>{submitting ? "Saving…" : (editing ? "Save changes" : "Add to inventory")}</button>{editing && <button className="text-button" type="button" onClick={() => { setEditing(null); setForm({ name: "", genericName: "", category: "", price: "", stock: "" }); }}>Cancel edit</button>}</form></div>
       <div className="panel"><h3>Customer requests</h3>{data?.reservations?.length ? data.reservations.map((item) => <div className="request-line" key={item.id}><span><b>{item.medicine}</b><small>{item.customer} · Qty {item.quantity}</small></span><span className={`status-tag ${item.status}`}>{item.status}</span></div>) : <p className="muted-copy">Reservations for your listed medicines will appear here.</p>}</div></div>

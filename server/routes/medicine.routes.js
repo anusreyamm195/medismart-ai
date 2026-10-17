@@ -25,6 +25,7 @@ export async function handleMedicineRoute(context) {
     const searchTerms = [...new Set(q.split(/[,\n;]+/).map((term) => term.trim()).filter(Boolean))];
     const location = (url.searchParams.get("location") || "").trim().toLowerCase();
     const locationTerms = location.split(",").map((term) => term.trim()).filter(Boolean);
+    const pharmacyId = url.searchParams.get("pharmacyId") || "";
     const maxPrice = url.searchParams.has("maxPrice") ? Number(url.searchParams.get("maxPrice")) : Infinity;
     const hasLatitude = url.searchParams.has("latitude");
     const hasLongitude = url.searchParams.has("longitude");
@@ -41,9 +42,9 @@ export async function handleMedicineRoute(context) {
       const pharmacy = data.pharmacies.find((item) => item.id === medicine.pharmacyId && item.status === "approved");
       if (!pharmacy) return [];
       const searchable = `${medicine.name} ${medicine.genericName} ${medicine.category} ${pharmacy.name}`.toLowerCase();
-      if (searchTerms.length && !searchTerms.some((term) => searchable.includes(term))) return [];
+      if (q && !searchable.includes(q)) return [];
       const searchableLocation = `${pharmacy.location || ""} ${pharmacy.address || ""}`.toLowerCase();
-      if (locationTerms.length && !locationTerms.some((term) => searchableLocation.includes(term))) return [];
+      if (!hasLatitude && locationTerms.length && !locationTerms.some((term) => searchableLocation.includes(term))) return [];
       if (medicine.price > maxPrice) return [];
       const distanceKm = hasLatitude && Number.isFinite(pharmacy.latitude) && Number.isFinite(pharmacy.longitude)
         ? calculateDistanceKm(searchLatitude, searchLongitude, pharmacy.latitude, pharmacy.longitude)
