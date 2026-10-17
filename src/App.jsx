@@ -674,14 +674,10 @@ function App() {
             <label className="price-filter">Max price <span>₹</span><input aria-label="Maximum price" type="number" min="0" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /><button onClick={() => search()} type="button">Apply</button></label>
             {error && <div className="alert alert-error" role="alert">{error}</div>}
             {notice && <div className="alert alert-success" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-<<<<<<< HEAD
+
             {nearbySearchActive && <NearbyPharmacies pharmacies={nearbyPharmacies} location={nearbySearchLocation} coordinates={userCoordinates} />}
             {registeredMedicines.length ? <div className="medicine-grid">{registeredMedicines.map((medicine) =>
               <MedicineCard key={medicine.id} medicine={medicine} userCoordinates={userCoordinates} reserving={reservingListingId === medicine.id} onDetails={() => openMedicine(medicine)} onReserve={() => reserveMedicine(medicine)} onSave={() => savePharmacy(medicine.pharmacyId)} onRate={(rating) => ratePharmacy(medicine.pharmacyId, rating)} />)}</div>
-=======
-            {medicines.length ? <div className="pharmacy-result-grid">{pharmacyResults.map(({ pharmacyId, listings }) =>
-              <PharmacyResultCard key={pharmacyId} pharmacy={listings[0]} medicines={listings} userCoordinates={userCoordinates} onDetails={openMedicine} onReserve={reserveMedicine} onSave={() => savePharmacy(pharmacyId)} onRate={ratePharmacy} />)}</div>
->>>>>>> ea9ccc85656fee765da1c5691db654bcb9a35054
               : <div className="empty-state"><span>⌕</span><h3>No matching medicines</h3><p>Try another name or broaden your location.</p></div>}
           </section>
           <section className="how-section">
@@ -869,106 +865,6 @@ function App() {
       {reportTarget && <Modal title="Report information" onClose={() => setReportTarget(null)}><p className="modal-intro">Help us keep medicine and pharmacy information accurate. Reports are reviewed by the platform team.</p><form className="stack-form" onSubmit={submitReport}><label>Report type<select name="type"><option value="incorrect_price">Incorrect price</option><option value="incorrect_stock">Incorrect availability</option><option value="medicine_information">Medicine information</option><option value="complaint">Complaint</option></select></label><label>What should we review?<textarea name="details" required minLength="5" maxLength="1000" rows="4" /></label>{error && <div className="alert alert-error">{error}</div>}<button className="button button-primary button-full" type="submit">Send report</button></form></Modal>}
     </div>
   );
-}
-
-function medicineChatReply(question, medicine, alternatives) {
-  const normalized = question.toLowerCase();
-  if (/dose|dosage|how many|how much|when.*take|take.*when/.test(normalized)) {
-    return "I can’t recommend a dose or schedule. Follow the package label and ask a pharmacist or clinician.";
-  }
-  if (/side effect|safe|safety|reaction|allerg/.test(normalized)) {
-    return "The catalogue doesn’t contain verified personal safety guidance. Please ask a pharmacist or clinician.";
-  }
-  if (/replace|substitut|alternative|instead|interchange/.test(normalized)) {
-    return alternatives.length
-      ? `The catalogue lists ${alternatives.join(", ")} as similar options. Similar does not mean interchangeable; ask a pharmacist or clinician before switching.`
-      : "No similar options are listed in the catalogue. Ask a pharmacist or clinician before changing medicines.";
-  }
-  if (/generic|ingredient|contain/.test(normalized)) {
-    return `${medicine.name} is listed with the generic ingredient: ${medicine.genericName}. Confirm with a pharmacist if you have questions.`;
-  }
-  if (/category|type/.test(normalized)) return `${medicine.name} is listed in the ${medicine.category} category.`;
-  return `${medicine.name}: ${medicine.info || "There is no detailed description in the catalogue yet."}`;
-}
-
-function MedicineChatbot({ medicine, alternatives }) {
-  const [open, setOpen] = useState(false);
-  const [question, setQuestion] = useState("");
-  const [messages, setMessages] = useState([]);
-  const ask = (text) => {
-    const cleanQuestion = text.trim();
-    if (!cleanQuestion) return;
-    setMessages((current) => [
-      ...current,
-      { role: "user", text: cleanQuestion },
-      { role: "assistant", text: medicineChatReply(cleanQuestion, medicine, alternatives) },
-    ]);
-    setQuestion("");
-  };
-
-  return <section className="medicine-chat-section">
-    <button className="button button-outline medicine-chat-toggle" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-      {open ? "Close medicine chat" : "Ask about this medicine"}
-    </button>
-    {open && <div className="medicine-chat">
-      <div className="medicine-chat-heading"><strong>Medlytic medicine assistant</strong><span>Catalog-based information, not medical advice.</span></div>
-      <div className="medicine-chat-messages" aria-live="polite" aria-relevant="additions">
-        {!messages.length && <p className="chat-welcome">Ask about {medicine.name}, its listed ingredient, or its catalog description.</p>}
-        {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
-      </div>
-      <div className="medicine-chat-prompts">
-        <button type="button" onClick={() => ask("What is this medicine for?")}>What is it for?</button>
-        <button type="button" onClick={() => ask("What is the generic ingredient?")}>Generic ingredient</button>
-      </div>
-      <form className="medicine-chat-form" onSubmit={(event) => { event.preventDefault(); ask(question); }}>
-        <label className="sr-only" htmlFor="medicine-chat-question">Ask a question about this medicine</label>
-        <input id="medicine-chat-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about this medicine…" maxLength="300" />
-        <button className="button button-primary button-small" type="submit" disabled={!question.trim()}>Send</button>
-      </form>
-    </div>}
-  </section>;
-}
-
-function FloatingMedicineChatbot({ medicines, currentQuery }) {
-  const [open, setOpen] = useState(false);
-  const [question, setQuestion] = useState("");
-  const [messages, setMessages] = useState([]);
-  const ask = (text) => {
-    const cleanQuestion = text.trim();
-    if (!cleanQuestion) return;
-    const normalized = cleanQuestion.toLowerCase();
-    const findMedicine = (phrase) => medicines.find((item) =>
-      [item.name, item.genericName].some((term) => term && phrase.includes(term.toLowerCase()))
-    );
-    const uniqueMedicines = [...new Map(medicines.map((item) => [item.medicineId || item.name, item])).values()];
-    const medicine = findMedicine(normalized) || findMedicine(currentQuery.trim().toLowerCase())
-      || (uniqueMedicines.length === 1 ? uniqueMedicines[0] : null);
-    const alternatives = medicine
-      ? uniqueMedicines.filter((item) => item.genericName === medicine.genericName && item.name !== medicine.name).map((item) => item.name)
-      : [];
-    const answer = medicine
-      ? medicineChatReply(cleanQuestion, medicine, alternatives)
-      : "Which medicine would you like to know about? Include its name for a specific answer.";
-    setMessages((current) => [...current, { role: "user", text: cleanQuestion }, { role: "assistant", text: answer }]);
-    setQuestion("");
-  };
-
-  return <aside className="floating-medicine-chat" aria-label="Medicine assistant">
-    {open && <section className="floating-chat-panel" role="dialog" aria-label="Ask about a medicine">
-      <header className="floating-chat-header"><div><strong>Medicine assistant</strong><small>Answers from Medlytic's medicine catalog</small></div><button className="floating-chat-close" type="button" aria-label="Close medicine assistant" onClick={() => setOpen(false)}>×</button></header>
-      <div className="floating-chat-messages" aria-live="polite" aria-relevant="additions">
-        {!messages.length && <p className="chat-welcome">Ask about a medicine’s use, generic ingredient, or catalog details.</p>}
-        {messages.map((message, index) => <p className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.text}</p>)}
-      </div>
-      <form className="medicine-chat-form floating-chat-form" onSubmit={(event) => { event.preventDefault(); ask(question); }}>
-        <label className="sr-only" htmlFor="floating-medicine-question">Ask about a medicine</label>
-        <input id="floating-medicine-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about a medicine…" maxLength="300" />
-        <button className="button button-primary button-small" type="submit" disabled={!question.trim()}>Send</button>
-      </form>
-      <p className="floating-chat-disclaimer">General information only. For personal medical advice, contact a clinician.</p>
-    </section>}
-    <button className="floating-chat-launcher" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span aria-hidden="true">✦</span>{open ? "Close chat" : "Ask about medicine"}</button>
-  </aside>;
 }
 
 function OwnerOverview({ data, onOpenStore }) {
